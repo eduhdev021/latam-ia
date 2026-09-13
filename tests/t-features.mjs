@@ -235,6 +235,40 @@ const sysOf = (body) => (body.messages.find((m) => m.role === 'system') || {}).c
   ok(html.includes('rel="icon"'), 'icone declarado');
 }
 
+
+// ------------------------------------------------------------------ 9. API externa + key
+{
+  console.log('\n[9] API externa + chave');
+  const b = boot();
+  await ready(b);
+  b.d.getElementById('c-base').value = 'https://ollama.exemplo.dev/';
+  b.d.getElementById('c-base').dispatchEvent(new b.w.Event('input', { bubbles: true }));
+  b.d.getElementById('c-key').value = 'segredo123';
+  b.d.getElementById('c-key').dispatchEvent(new b.w.Event('input', { bubbles: true }));
+  const st = JSON.parse(b.w.localStorage.getItem('latam.settings'));
+  ok(st.apiBase === 'https://ollama.exemplo.dev/', 'base salva (sem barra final)', st.apiBase);
+  ok(st.apiKey === 'segredo123', 'chave salva');
+
+  b.state.reqs.length = 0;
+  sendMsg(b, 'oi');
+  await until(() => b.state.sent.length >= 1 || b.state.reqs.some((r) => r.url.includes('/api/chat')));
+  const chatReq = b.state.reqs.find((r) => r.url.includes('/api/chat'));
+  ok(!!chatReq, 'requisicao de chat feita');
+  ok(chatReq.url.startsWith('https://ollama.exemplo.dev/api/chat'), 'URL usa a base externa', chatReq.url);
+  ok((chatReq.opts.headers || {})['authorization'] === 'Bearer segredo123',
+     'Authorization Bearer enviado', chatReq.opts.headers);
+
+  // sem chave configurada nao manda header
+  const b2 = boot();
+  await ready(b2);
+  b2.state.reqs.length = 0;
+  sendMsg(b2, 'oi');
+  await until(() => b2.state.reqs.some((r) => r.url.includes('/api/chat')));
+  const r2 = b2.state.reqs.find((r) => r.url.includes('/api/chat'));
+  ok(r2.url.startsWith('/api/chat'), 'sem base: URL relativa', r2.url);
+  ok(!(r2.opts.headers || {})['authorization'], 'sem chave: sem header', r2.opts.headers);
+}
+
 console.log('\n================================');
 console.log(`  ${pass} passaram, ${fail} falharam`);
 console.log('================================');

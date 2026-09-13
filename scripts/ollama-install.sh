@@ -168,6 +168,9 @@ if command -v git >/dev/null 2>&1; then
         if [ -f "${WORK}/ui-repo/scripts/ui-chat.html" ] && [ -f "${WORK}/ui-repo/scripts/ui-proxy.js" ]; then
             cp "${WORK}/ui-repo/scripts/ui-chat.html" "${SERVER_DIR}/ui/chat.html"
             cp "${WORK}/ui-repo/scripts/ui-proxy.js"  "${SERVER_DIR}/ui/proxy.js"
+            # Logo opcional: sem ele o chat cai no "L" de sempre.
+            cp "${WORK}/ui-repo/assets/logo-192.png" "${SERVER_DIR}/ui/logo-192.png" 2>/dev/null || true
+            cp "${WORK}/ui-repo/assets/logo-512.png" "${SERVER_DIR}/ui/logo-512.png" 2>/dev/null || true
             git -C "${WORK}/ui-repo" rev-parse --short HEAD > "${SERVER_DIR}/ui/.git-ref" 2>/dev/null || true
             UI_FROM_GIT="true"
             echo "[egg] chat instalado do Git (commit $(cat "${SERVER_DIR}/ui/.git-ref" 2>/dev/null || echo '?'))"

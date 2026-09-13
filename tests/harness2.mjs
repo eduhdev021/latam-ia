@@ -9,7 +9,7 @@ export function boot(overrides = {}) {
   const vc = new VirtualConsole();
   vc.on('jsdomError', e => log.push('jsdomError: ' + (e.message || e)));
   vc.on('error', (...a) => log.push('console.error: ' + a.join(' ')));
-  const state = { sent: [], calls: [], search: [], models: overrides.models || [{ name: 'qwen3:0.6b', size: 522653767, capabilities: ['completion','tools','thinking'] }], show: overrides.show };
+  const state = { sent: [], calls: [], search: [], reqs: [], models: overrides.models || [{ name: 'qwen3:0.6b', size: 522653767, capabilities: ['completion','tools','thinking'] }], show: overrides.show };
   const enc = new TextEncoder();
   function streamResponse(chunks, body, n) {
     return {
@@ -32,6 +32,7 @@ export function boot(overrides = {}) {
       w.fetch = async (u, o) => {
         const url = String(u);
         const body = o && o.body ? JSON.parse(o.body) : null;
+        state.reqs.push({ url, opts: o || {} });
         if (url.startsWith('/search')) {
           state.search.push(url);
           return {

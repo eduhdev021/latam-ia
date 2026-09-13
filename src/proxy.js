@@ -58,8 +58,17 @@ function newSession() {
   saveSessions();
   return token;
 }
+// Bearer com o proprio UI_TOKEN tambem autentica - e assim que o campo
+// "API key" do chat conversa com este servidor (e com APIs externas que usam
+// chave no Authorization). Sessoes de login continuam valendo.
+function tokenMatches(token) {
+  if (!UI_TOKEN || !token) return false;
+  const a = Buffer.from(token), b = Buffer.from(UI_TOKEN);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 function sessionValid(token) {
   if (!token) return false;
+  if (tokenMatches(token)) return true;
   const s = sessions.get(token);
   if (!s) return false;
   if (s.exp < Date.now()) {
@@ -119,8 +128,10 @@ const MANIFEST = JSON.stringify({
   theme_color: '#0a0c10',
   lang: 'pt-BR',
   icons: [
+    { src: '/logo-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+    { src: '/logo-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+    { src: '/logo-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
     { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
-    { src: '/icon.svg', sizes: '512x512', type: 'image/svg+xml', purpose: 'maskable' },
   ],
 });
 
@@ -341,13 +352,10 @@ const server = http.createServer((req, res) => {
     });
   }
 
-  // ---------------------------------------------------------------- api
-  // Tudo que nao for pagina vai pro Ollama. Se o token estiver ligado, exige
-  // sessao valida - inclusive pra chamadas diretas de script.
-  if (UI_TOKEN && !sessionValid(sessionToken(req))) {
-    return json(res, 401, { error: 'nao autenticado - faca login em /login' });
-  }
-
+  // ---------------------------------------------------------------- PWA/logo
+  // Shell do app e icones sao publicos mesmo com UI_TOKEN ligado: nao contem
+  // dado algum (so o casco do app), e o service worker precisa existir antes do
+  // login para o PWA instalar. A API e a pagina continuam atras do login.
   // ---------------------------------------------------------------- PWA
   // Service worker e manifest tem que ser arquivos reais na raiz: data URI nao
   // funciona pra service worker (o navegador exige same-origin + escopo).
@@ -366,6 +374,28 @@ const server = http.createServer((req, res) => {
   if (p === '/favicon.ico' || p === '/icon.svg') {
     res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'max-age=86400' });
     return res.end(ICON);
+  }
+  if (p === '/logo-192.png' || p === '/logo-512.png' || p === '/logo.png') {
+    // O logo vem do Git (assets/), copiado pela instalacao para ui/. Cache longo:
+    // o arquivo so muda quando o usuario reinstala.
+    var file = path.join(__dirname, p === '/logo.png' ? 'logo-512.png' : p.slice(1));
+    return fs.promises.readFile(file).then(
+      (buf) => {
+        res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=604800' });
+        res.end(buf);
+      },
+      () => {
+        res.writeHead(404, { 'content-type': 'text/plain' });
+        res.end('logo nao instalado - rode Reinstall para buscar do Git');
+      }
+    );
+  }
+
+  // ---------------------------------------------------------------- api
+  // Tudo que nao for pagina vai pro Ollama. Se o token estiver ligado, exige
+  // sessao valida - inclusive pra chamadas diretas de script.
+  if (UI_TOKEN && !sessionValid(sessionToken(req))) {
+    return json(res, 401, { error: 'nao autenticado - faca login em /login' });
   }
 
   // ---------------------------------------------------------------- busca

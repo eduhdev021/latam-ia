@@ -17,6 +17,7 @@ são removidas na instalação.
 | `scripts/ui-proxy.js` | sidecar Node: serve o chat, o PWA e a rota `/search`, e faz proxy da API |
 | `scripts/ui-chat.html` | o chat LATAM IA (arquivo único, sem CDN) |
 | `src/` | **fonte de verdade** dos três arquivos acima |
+| `assets/` | logo com fundo transparente + derivações 192/512 pro PWA |
 | `tests/` | suíte jsdom + testes de ponta a ponta contra Ollama real |
 | `build_egg.py` | regenera `egg-ollama.json` copiando de `src/` para `scripts/` |
 
@@ -102,6 +103,7 @@ Suíte atual (roda com `node tests/t-*.mjs`, precisa de `npm i jsdom`):
 | `t-features.mjs` | memória, fila, multi-modelo, fixar, `search`, PWA | **50/50** |
 | `t-live.mjs` | ponta a ponta contra Ollama real (não mock) | **16/16** |
 | `t-live4.mjs` | as features novas contra Ollama real, com Wikipedia de verdade | **25/25** |
+| `t-live5.mjs` | API key de ponta a ponta contra proxy com `UI_TOKEN` | **8/8** |
 
 Dois bugs que a suíte ao vivo pegou e o jsdom sozinho não pegaria:
 
@@ -308,6 +310,49 @@ Duas coisas que medi antes de implementar:
 
 **Não implementado** (exige backend de verdade): RAG com banco vetorial, notas,
 canais, voz (STT/TTS), analytics/ELO, RBAC, LDAP/SSO/SCIM, plugins e MCP.
+
+## Logo, ícone e PWA
+
+O logo (`assets/logo.png`) teve o fundo preto removido por corte de cor medido
+no próprio arquivo (o halo escuro era RGB quase preto com alpha alto; `rembg`
+tratou o halo como parte do logo e falhou). A instalação copia
+`assets/logo-192.png` e `logo-512.png` do Git para `ui/`, e o proxy serve em
+`/logo-192.png`, `/logo-512.png` e `/logo.png` com cache de 7 dias.
+
+- **Favicon e header**: o chat testa `/logo-192.png`; se existir, troca o "L"
+  pelo logo e vira o favicon. Instalação antiga sem o arquivo continua no "L".
+- **PWA**: o manifest lista os PNGs 192/512 (any + maskable).
+- **Auth**: esses arquivos são públicos mesmo com `UI_TOKEN` ligado — é só o
+  casco do app, sem dado. A API e a página continuam atrás do login.
+
+## API externa e chave (painel → Conexao)
+
+Dois campos novos: **API externa** (URL base de outra instância Ollama ou
+compatível) e **API key** (enviada como `Authorization: Bearer`). Sem
+configurar, o chat fala com o próprio servidor. A chave fica só no
+`localStorage` do navegador, e a API de destino precisa aceitar CORS.
+
+Contra o próprio servidor com `UI_TOKEN`, a mesma chave vale como Bearer
+(comparação em tempo constante) — testado de ponta a ponta: chave certa
+carrega modelos e responde, chave errada vira erro visível, sem chave a API
+recusa (`t-live5.mjs`, 8/8).
+
+## Tem painel oficial do Ollama?
+
+**Não.** Testado em setembro/2026:
+
+- ao vivo: `GET /` na API v0.34.0 devolve só `Ollama is running` em
+  `text/plain`; não há `/index.html` nem assets;
+- `github.com/ollama/webui`, `ollama/ui` e `ollama/web` → **404**;
+- guias atuais ([1](https://markaicode.com/integrate/ollama-with-open-webui/),
+  [2](https://localaimaster.com/blog/open-webui-setup-guide)) seguem tratando o
+  **Open WebUI** (terceiros) como a interface padrão.
+
+O Open WebUI em si não cabe no seu server: é Python/FastAPI + SvelteKit, imagem
+Docker de ~1,5 GB — e server Pterodactyl não roda Docker. Alternativas leves
+existem (ex.: `ollama-gui`, que exige build Vite/React), mas nenhuma é oficial.
+O LATAM IA continua sendo a interface: arquivo único servido pelo proxy, sem
+build.
 
 **Autenticação** — veja a seção acima.
 

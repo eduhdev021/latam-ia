@@ -7,7 +7,7 @@ import fs from 'fs';
 const BASE = 'http://127.0.0.1:25565';
 let html = fs.readFileSync('/mnt/server/ui/chat.html', 'utf8');
 html = html.replace('<div id="cfg" style="display:none"></div>',
-  '<div id="cfg" style="display:none" data-threads="2" data-auth="0"></div>');
+  '<div id="cfg" style="display:none" data-threads="1" data-auth="0"></div>');
 
 let pass = 0, fail = 0;
 function ok(cond, name, extra) {
@@ -25,6 +25,13 @@ const dom = new JSDOM(html, {
   beforeParse(w) {
     w.fetch = (u, o) => fetch(String(u).startsWith('http') ? String(u) : BASE + String(u), o);
     w.navigator.clipboard = { writeText: async () => {} };
+    // Este sandbox tem 1.9 GB de RAM: o KV cache do qwen3 com o ctx default do
+    // modelo (40960) nao cabe ("insufficient memory", medido). O painel tem
+    // num_ctx por modelo - o teste usa o proprio mecanismo do produto.
+    w.localStorage.setItem('latam.settings', JSON.stringify({
+      theme: 'dark',
+      opts: { 'qwen3:0.6b': { num_ctx: 2048 }, 'tinyllama:latest': { num_ctx: 2048 } },
+    }));
   },
 });
 const w = dom.window, d = w.document;
@@ -38,6 +45,19 @@ function send(text) {
   d.getElementById('input').value = text;
   d.getElementById('input').dispatchEvent(new w.Event('input', { bubbles: true }));
   d.getElementById('form').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
+}
+
+// Modelos ficam carregados ~5 min apos o uso; com 1.9 GB de RAM, sobra de uma
+// rodada anterior causa OOM na seguinte ("signal: killed"). keep_alive:0 descarrega.
+{
+  const tags = await (await fetch(BASE + '/api/tags')).json();
+  for (const m of (tags.models || [])) {
+    await fetch(BASE + '/api/generate', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: m.name, prompt: '', keep_alive: 0, stream: false }),
+    });
+  }
+  console.log('   (modelos descarregados antes de comecar)');
 }
 
 console.log('\n[1] modelos carregados de verdade');
@@ -102,8 +122,15 @@ chk.dispatchEvent(new w.Event('change', { bubbles: true }));
 ok(d.getElementById('multi').style.display === '', 'seletor abriu');
 const labels = [...d.querySelectorAll('#multi label')];
 ok(labels.length === nomes.length, 'todos os modelos listados', labels.length);
-// garante que os dois estao marcados
-labels.forEach((l) => { const cb = l.querySelector('input'); if (!cb.checked) { cb.checked = true; cb.dispatchEvent(new w.Event('change', { bubbles: true })); } });
+// Este sandbox tem 1.9 GB: so cabem dois modelos juntos (qwen3 1.0 GB +
+// qwen2.5 0.5 GB, medido). Marca exatamente esses dois e desmarca o resto.
+const PAR = ['qwen3:0.6b', 'qwen2.5:0.5b'];
+labels.forEach((l) => {
+  const nome = l.title || l.textContent;
+  const want = PAR.includes(nome);
+  const cb = l.querySelector('input');
+  if (cb.checked !== want) { cb.checked = want; cb.dispatchEvent(new w.Event('change', { bubbles: true })); }
+});
 const antes = d.querySelectorAll('.msg.assistant').length;
 send('Responda so com uma palavra: qual e a capital da Franca?');
 ok(await until(() => d.querySelectorAll('.msg.assistant').length >= antes + 2, 180000),
@@ -118,7 +145,7 @@ const whos = [...d.querySelectorAll('.msg.assistant .who')].slice(-2).map((x) =>
 console.log('   bolhas: ' + JSON.stringify(whos));
 // A bolha do modelo principal nao leva rotulo (o modelo ja esta no seletor);
 // a secundaria leva o nome para dar para distinguir.
-ok(whos.some((x) => /tinyllama/.test(x)) && whos.some((x) => x === 'LATAM IA'),
+ok(whos.some((x) => /qwen2\.5/.test(x)) && whos.some((x) => x === 'LATAM IA'),
    'uma bolha por modelo (secundaria rotulada)', whos);
 const lastTwo = [...d.querySelectorAll('.msg.assistant')].slice(-2);
 console.log('   ' + whos[0] + ': ' + lastTwo[0].querySelector('.content').textContent.slice(0, 60).replace(/\s+/g, ' '));
@@ -144,7 +171,8 @@ for (const [p, ct] of [['/sw.js', 'javascript'], ['/manifest.webmanifest', 'mani
 }
 const mani = await (await fetch(BASE + '/manifest.webmanifest')).json();
 ok(mani.name === 'LATAM IA' && mani.start_url === '/', 'manifest valido', mani.name);
-ok(mani.icons.length === 2, 'icones declarados', mani.icons.length);
+ok(mani.icons.some((i) => i.src === '/logo-192.png') && mani.icons.some((i) => i.src === '/logo-512.png'),
+   'icones do logo declarados', mani.icons.map((i) => i.src));
 
 if (log.length) console.log('\n   logs jsdom: ' + JSON.stringify(log.slice(0, 4)));
 

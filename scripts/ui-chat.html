@@ -125,6 +125,7 @@
     display: grid; place-items: center; font-size: 12px; font-weight: 700; color: #fff;
   }
   .brand .sub { font-size: 11px; color: var(--muted); font-weight: 500; }
+  .logo img { width: 100%; height: 100%; object-fit: contain; display: block; }
   header .spacer { flex: 1; }
   select {
     background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 9px;
@@ -523,6 +524,14 @@
       <textarea id="p-schema" placeholder='{"type":"object","properties":{...}}'></textarea>
       <div class="hint">JSON Schema. O modelo e obrigado a seguir.</div></div>
 
+    <div class="grp-t">Conexao</div>
+    <div class="fld"><label><b>API externa</b> <span style="color:var(--dim)">- opcional</span></label>
+      <input type="text" id="c-base" placeholder="vazio = este servidor">
+      <div class="hint">URL base de outra API Ollama (ou compativel), ex.: https://ollama.exemplo.com</div></div>
+    <div class="fld"><label><b>API key</b></label>
+      <input type="password" id="c-key" placeholder="sem chave" autocomplete="off">
+      <div class="hint">Enviada como Authorization: Bearer. Fica so neste navegador. A API de destino precisa aceitar CORS.</div></div>
+
     <div class="grp-t">Memoria</div>
     <div class="fld"><label>Fatos lembrados em todas as conversas</label>
       <div class="hint">Fica neste navegador e vai como contexto em cada mensagem.</div>
@@ -590,11 +599,13 @@
   var settings = LS.read('latam.settings', null) || {
     theme: 'dark', math: true, system: '', format: '', schema: '', truncate: true, flash: false,
     opts: {},  // { [modelo]: { temperature, top_p, ... } }
-    memory: [], memOn: true, webOn: true, multiOn: false, multiModels: [], pinned: {}
+    memory: [], memOn: true, webOn: true, multiOn: false, multiModels: [], pinned: {},
+    apiBase: '', apiKey: ''
   };
   // Migra settings antigas: quem ja usava o chat nao tem os campos novos.
   ['memory', 'pinned', 'multiModels'].forEach(function (k) { if (settings[k] === undefined) settings[k] = k === 'memory' || k === 'multiModels' ? [] : {}; });
   ['memOn', 'webOn'].forEach(function (k) { if (settings[k] === undefined) settings[k] = true; });
+  ['apiBase', 'apiKey'].forEach(function (k) { if (settings[k] === undefined) settings[k] = ''; });
   if (settings.multiOn === undefined) settings.multiOn = false;
   var modelMeta = {};   // nome -> { size, capabilities, contextLength, defaults }
   var busy = false, controller = null, autoScroll = true;
@@ -603,6 +614,23 @@
   var katexReady = false;
 
   /* ============================================================ util */
+  // Toda chamada a API do Ollama passa por aqui. Com API base/key configurados
+  // no painel (grupo Conexao), o chat fala com outra instancia - ex.: Ollama
+  // Cloud ou um servidor atras de reverse proxy com chave. Sem configurar,
+  // continua falando com o proprio servidor que serviu a pagina.
+  function apiFetch(p, opts) {
+    opts = opts || {};
+    var base = String(settings.apiBase || '').trim().replace(/\/+$/, '');
+    if (base) opts = Object.assign({}, opts, { mode: 'cors' });
+    var url = base ? base + p : p;
+    if (settings.apiKey) {
+      var h = Object.assign({}, opts.headers || {});
+      h['authorization'] = 'Bearer ' + settings.apiKey;
+      opts.headers = h;
+    }
+    return fetch(url, opts);
+  }
+
   function esc(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -1807,7 +1835,7 @@
     if (fmt) body.format = fmt;
     if (settings.truncate) body.truncate = true;
 
-    fetch('/api/chat', {
+    apiFetch('/api/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       signal: ctl.signal,
@@ -1978,7 +2006,7 @@
   /* ============================================================ modelos */
   function loadModels() {
     status('carregando modelos...');
-    return fetch('/api/tags', { cache: 'no-store' }).then(function (r) {
+    return apiFetch('/api/tags', { cache: 'no-store' }).then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     }).then(function (data) {
@@ -2014,7 +2042,7 @@
   function probeModel(name) {
     if (!name) return Promise.resolve();
     capsEl.textContent = '';
-    return fetch('/api/show', {
+    return apiFetch('/api/show', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name: name })
@@ -2319,6 +2347,8 @@
   bindSetting('p-theme', 'theme', 'bool');
   bindSetting('p-math', 'math', 'bool');
   bindSetting('p-system', 'system', 'str');
+  bindSetting('c-base', 'apiBase', 'str');
+  bindSetting('c-key', 'apiKey', 'str');
   bindSetting('mem-on', 'memOn', 'bool');
   bindSetting('web-on', 'webOn', 'bool');
   if ($('multi-on')) $('multi-on').checked = !!settings.multiOn;
@@ -2428,6 +2458,29 @@
   if ($('mem-new')) $('mem-new').addEventListener('keydown', function (e) {
     if (e.key === 'Enter') { e.preventDefault(); addMemory(); }
   });
+
+  /* ============================================================ logo */
+  // O logo vem do Git (assets/logo-*.png) e o proxy serve em /logo-192.png.
+  // Instalacao antiga sem o arquivo: o probe falha e o "L" continua.
+  (function () {
+    var probe = new Image();
+    probe.onload = function () {
+      document.querySelectorAll('.logo').forEach(function (el) {
+        el.textContent = '';
+        el.style.background = 'none';
+        var img = document.createElement('img');
+        img.src = '/logo-192.png';
+        img.alt = 'LATAM IA';
+        el.appendChild(img);
+      });
+      var link = document.createElement('link');
+      link.rel = 'icon';
+      link.type = 'image/png';
+      link.href = '/logo-192.png';
+      document.head.appendChild(link);
+    };
+    probe.src = '/logo-192.png';
+  })();
 
   /* ============================================================ PWA */
   // Registra o service worker se o navegador aceitar. Em http:// sem TLS o
