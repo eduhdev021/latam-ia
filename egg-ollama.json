@@ -3,7 +3,7 @@
         "version": "PTDL_v2",
         "update_url": null
     },
-    "uuid": "d8d71dca-384c-470f-ab85-1305a055ea7b",
+    "uuid": "e06a5173-dd09-4deb-abdf-1bd329bb98d7",
     "name": "Ollama (LLM)",
     "author": "eduardo@lagoshost.com.br",
     "description": "Servidor Ollama para rodar LLMs locais, com o Open WebUI como interface na mesma porta.\nAbra http://IP:PORTA/ no navegador: o primeiro acesso cria a conta admin. O Ollama fica so\nem 127.0.0.1; a API compativel com OpenAI e o /api/v1 do Open WebUI (Settings > Account >\nAPI Keys). Desligue ENABLE_OPENWEBUI para expor a API do Ollama direto na allocation.\nInferencia em CPU - o Pterodactyl nao repassa GPU pro container.\nRequisitos: CPU com AVX2 (sem AVX funciona, mas cai no backend 'cpu' e fica muito lento), 4 GB+ de RAM por modelo pequeno e disco suficiente pro modelo (ex.: qwen3:0.6b = 522 MB, llama3.1:8b = 4.9 GB). O binario do Ollama ocupa ~70 MB apos remover as libs de GPU.\nA instalacao baixa ~1.4 GB do GitHub: de uns minutos e precisa de ~4.5 GB livres no pico.",

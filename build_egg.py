@@ -14,7 +14,8 @@ egg = {
     # UUID fixo DE PROPOSITO. Sem ele o painel gera um novo a cada importacao e
     # cria uma egg duplicada em vez de atualizar a que o server ja usa - ai as
     # variaveis novas nunca chegam no servidor.
-    "uuid": "d8d71dca-384c-470f-ab85-1305a055ea7b",
+    # UUID do server do usuario: reimportar ATUALIZA a egg que ele ja usa.
+    "uuid": "e06a5173-dd09-4deb-abdf-1bd329bb98d7",
     "name": "Ollama (LLM)",
     "author": "eduardo@lagoshost.com.br",
     "description": (

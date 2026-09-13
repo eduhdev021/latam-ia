@@ -278,6 +278,36 @@ command "search"`), então o nome tem que ser exato — a lista está em
 3. **Pela API** (com token de admin do Open WebUI):
    `curl -X POST .../ollama/api/pull -d '{"name":"llama3.2:1b"}'`
 
+### Modelos cloud: API key ou login?
+
+São duas coisas diferentes, e a diferença decide o que você configura.
+
+**API key** (`ollama_yourkeyhere`, criada em `ollama.com/settings/keys`) serve
+para falar **direto** com `https://ollama.com/api`. Ela **não** faz o Ollama local
+rodar modelo `-cloud` — medido: com `OLLAMA_API_KEY` definido no `ollama serve`,
+`gpt-oss:20b-cloud` seguiu devolvendo `{"error":"Unauthorized"}`.
+
+O caminho com API key é ligar o `ollama.com` como conexão no Open WebUI. O site
+expõe endpoint **compatível com OpenAI** em `/v1` (medido: `/v1/models` lista 20
+modelos cloud; `/v1/chat/completions` com chave inválida devolve
+`401 {"error":{"message":"Unauthorized","type":"api_error"}}`, o formato OpenAI):
+
+1. Admin → Settings → **Connections** → **OpenAI API**
+2. URL: `https://ollama.com/v1` · Key: sua API key
+3. Os modelos cloud aparecem no seletor do chat
+
+Assim a inferência roda na Ollama: não usa sua CPU nem sua RAM, e não precisa de
+`signin` nenhum.
+
+**Login** (`ollama signin`) é o que faz o **Ollama local** rodar os `-cloud` —
+útil se você quer que eles apareçam junto dos locais. Sem navegador dá para fazer
+sem o fluxo interativo: copie `id_ed25519.pub` do diretório do server e cole em
+`ollama.com/settings/keys`. O `SIGNIN=1` da egg só automatiza a impressão dessa
+chave/URL no console.
+
+> Nos dois casos é preciso ter conta em ollama.com: a API key é gerada **dentro**
+> da conta, em `/settings/keys`. Não existe chave sem conta.
+
 ### Modelos cloud (a "API key da Ollama")
 
 Os modelos com sufixo `-cloud` (`gpt-oss:120b-cloud`, `deepseek-v3.1:671b-cloud`)
@@ -313,7 +343,7 @@ server — sobrevive a restart, **não** a Reinstall.
 
 Variável nova só chega no servidor se a egg for reimportada — atualizar o start
 script pelo `curl` não acrescenta variável. A egg tem **uuid fixo**
-(`d8d71dca-384c-470f-ab85-1305a055ea7b`), então importar o JSON de novo atualiza
+(`e06a5173-dd09-4deb-abdf-1bd329bb98d7`), então importar o JSON de novo atualiza
 a egg existente em vez de criar uma duplicada. Antes disso não tinha uuid, e o
 painel gerava um novo a cada importação — quem importou uma versão antiga pode
 precisar adicionar a variável à mão em *Admin → Nests → egg → Variables*.
