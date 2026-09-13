@@ -45,6 +45,11 @@ function setup({ withOwui = false } = {}) {
   writeFileSync(join(base, "ollama", "VERSION"), "v0.0.0-teste\n");
   writeFileSync(join(base, "ollama", "bin", "ollama"), OLLAMA_STUB);
   spawnSync("chmod", ["+x", join(base, "ollama", "bin", "ollama")]);
+  // curl falso: o start script espera o Ollama responder em 127.0.0.1 antes de
+  // gravar o num_thread. Sem isso cada caso queimaria os 60 s da espera.
+  mkdirSync(join(base, "stub-bin"), { recursive: true });
+  writeFileSync(join(base, "stub-bin", "curl"), "#!/bin/bash\nexit 0\n");
+  spawnSync("chmod", ["+x", join(base, "stub-bin", "curl")]);
   if (withOwui) {
     mkdirSync(join(base, "owui-venv", "bin"), { recursive: true });
     writeFileSync(join(base, "owui-venv", "bin", "open-webui"), OWUI_STUB);
@@ -55,7 +60,8 @@ function setup({ withOwui = false } = {}) {
 
 function run(base, env) {
   const r = spawnSync("bash", [START], {
-    env: { ...process.env, ...env, BASE_DIR: base },
+    env: { ...process.env, PATH: join(base, "stub-bin") + ":" + process.env.PATH,
+           ...env, BASE_DIR: base },
     encoding: "utf8",
     timeout: 30000,
   });
