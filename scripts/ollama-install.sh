@@ -198,6 +198,8 @@ const PUBLIC_PORT = parseInt(process.env.SERVER_PORT || '11434', 10);
 const UPSTREAM_HOST = '127.0.0.1';
 const UPSTREAM_PORT = parseInt(process.env.OLLAMA_INTERNAL_PORT || '11434', 10);
 const CHAT_HTML = path.join(__dirname, 'chat.html');
+// 0 = Ollama decide; >0 limita as threads de inferencia (bom pra modelo pequeno)
+const CPU_THREADS = String(parseInt(process.env.CPU_THREADS || '0', 10) || 0);
 
 const server = http.createServer((req, res) => {
   if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
@@ -206,8 +208,15 @@ const server = http.createServer((req, res) => {
         res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
         return res.end('chat.html nao encontrado: ' + err.message);
       }
+      // injeta a config do servidor na pagina (nada sensivel aqui)
+      const html = buf
+        .toString('utf8')
+        .replace(
+          '<div id="cfg" style="display:none"></div>',
+          '<div id="cfg" style="display:none" data-threads="' + CPU_THREADS + '"></div>'
+        );
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-      res.end(buf);
+      res.end(html);
     });
   }
 
@@ -434,6 +443,7 @@ PROXYEOF
   <button class="icon-btn" id="new" title="Nova conversa" aria-label="Nova conversa">+</button>
 </header>
 
+<div id="cfg" style="display:none"></div>
 <div id="log"><div class="wrap" id="wrap"></div></div>
 
 <form id="form">
@@ -466,6 +476,8 @@ PROXYEOF
   var controller = null;
   var busy = false;
   var autoScroll = true;
+  var cfgEl = document.getElementById('cfg');
+  var THREADS = (cfgEl && cfgEl.dataset && cfgEl.dataset.threads) || '0';
 
   /* ---------------------------------------------------------- util */
   function esc(s) {
@@ -637,6 +649,28 @@ PROXYEOF
     input.focus();
   }
 
+  // Limita as threads de inferencia. Em modelo pequeno (<3B) thread demais ATRASA:
+  // o overhead de sincronizacao entre as threads come o ganho. 0 = Ollama decide.
+  function buildOptions() {
+    var o = {};
+    var t = parseInt(THREADS, 10);
+    if (t > 0) o.num_thread = t;
+    return o;
+  }
+
+  var waitTimer = null;
+  function startWaitClock() {
+    var t0 = Date.now();
+    stopWaitClock();
+    waitTimer = setInterval(function () {
+      var s = Math.round((Date.now() - t0) / 1000);
+      status('aguardando o modelo... ' + s + 's' + (s > 20 ? ' (carregando na RAM)' : ''));
+    }, 1000);
+  }
+  function stopWaitClock() {
+    if (waitTimer) { clearInterval(waitTimer); waitTimer = null; }
+  }
+
   function setBusy(v) {
     busy = v;
     input.disabled = !modelReady();
@@ -668,6 +702,7 @@ PROXYEOF
     var el = addMessage('assistant');
     thinking(el);
     status('aguardando o modelo...');
+    startWaitClock();
 
     var st = streamer(el);
     var thinkBuf = '';
@@ -680,7 +715,13 @@ PROXYEOF
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       signal: controller.signal,
-      body: JSON.stringify({ model: model, messages: history, stream: true, think: thinkBox.checked })
+      body: JSON.stringify({
+        model: model,
+        messages: history,
+        stream: true,
+        think: thinkBox.checked,
+        options: buildOptions()
+      })
     }).then(function (resp) {
       if (!resp.ok) return resp.text().then(function (t) { throw new Error('HTTP ' + resp.status + ' - ' + t); });
       var reader = resp.body.getReader();
@@ -707,7 +748,7 @@ PROXYEOF
               stickToBottom();
             }
             if (m.content) {
-              if (firstToken) { firstToken = false; status('gerando...'); }
+              if (firstToken) { firstToken = false; stopWaitClock(); status('gerando...'); }
               st.push(m.content);
             }
           }
@@ -716,6 +757,7 @@ PROXYEOF
       }
 
       function close() {
+        stopWaitClock();
         var answer = st.done();
         var ms = Date.now() - startedAt;
         if (answer) history.push({ role: 'assistant', content: answer });
@@ -726,6 +768,7 @@ PROXYEOF
 
       return pump();
     }).catch(function (e) {
+      stopWaitClock();
       var answer = st.done();
       if (e.name === 'AbortError') {
         if (answer) history.push({ role: 'assistant', content: answer });

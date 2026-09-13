@@ -170,6 +170,7 @@
   <button class="icon-btn" id="new" title="Nova conversa" aria-label="Nova conversa">+</button>
 </header>
 
+<div id="cfg" style="display:none"></div>
 <div id="log"><div class="wrap" id="wrap"></div></div>
 
 <form id="form">
@@ -202,6 +203,8 @@
   var controller = null;
   var busy = false;
   var autoScroll = true;
+  var cfgEl = document.getElementById('cfg');
+  var THREADS = (cfgEl && cfgEl.dataset && cfgEl.dataset.threads) || '0';
 
   /* ---------------------------------------------------------- util */
   function esc(s) {
@@ -373,6 +376,28 @@
     input.focus();
   }
 
+  // Limita as threads de inferencia. Em modelo pequeno (<3B) thread demais ATRASA:
+  // o overhead de sincronizacao entre as threads come o ganho. 0 = Ollama decide.
+  function buildOptions() {
+    var o = {};
+    var t = parseInt(THREADS, 10);
+    if (t > 0) o.num_thread = t;
+    return o;
+  }
+
+  var waitTimer = null;
+  function startWaitClock() {
+    var t0 = Date.now();
+    stopWaitClock();
+    waitTimer = setInterval(function () {
+      var s = Math.round((Date.now() - t0) / 1000);
+      status('aguardando o modelo... ' + s + 's' + (s > 20 ? ' (carregando na RAM)' : ''));
+    }, 1000);
+  }
+  function stopWaitClock() {
+    if (waitTimer) { clearInterval(waitTimer); waitTimer = null; }
+  }
+
   function setBusy(v) {
     busy = v;
     input.disabled = !modelReady();
@@ -404,6 +429,7 @@
     var el = addMessage('assistant');
     thinking(el);
     status('aguardando o modelo...');
+    startWaitClock();
 
     var st = streamer(el);
     var thinkBuf = '';
@@ -416,7 +442,13 @@
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       signal: controller.signal,
-      body: JSON.stringify({ model: model, messages: history, stream: true, think: thinkBox.checked })
+      body: JSON.stringify({
+        model: model,
+        messages: history,
+        stream: true,
+        think: thinkBox.checked,
+        options: buildOptions()
+      })
     }).then(function (resp) {
       if (!resp.ok) return resp.text().then(function (t) { throw new Error('HTTP ' + resp.status + ' - ' + t); });
       var reader = resp.body.getReader();
@@ -443,7 +475,7 @@
               stickToBottom();
             }
             if (m.content) {
-              if (firstToken) { firstToken = false; status('gerando...'); }
+              if (firstToken) { firstToken = false; stopWaitClock(); status('gerando...'); }
               st.push(m.content);
             }
           }
@@ -452,6 +484,7 @@
       }
 
       function close() {
+        stopWaitClock();
         var answer = st.done();
         var ms = Date.now() - startedAt;
         if (answer) history.push({ role: 'assistant', content: answer });
@@ -462,6 +495,7 @@
 
       return pump();
     }).catch(function (e) {
+      stopWaitClock();
       var answer = st.done();
       if (e.name === 'AbortError') {
         if (answer) history.push({ role: 'assistant', content: answer });

@@ -11,6 +11,8 @@ const PUBLIC_PORT = parseInt(process.env.SERVER_PORT || '11434', 10);
 const UPSTREAM_HOST = '127.0.0.1';
 const UPSTREAM_PORT = parseInt(process.env.OLLAMA_INTERNAL_PORT || '11434', 10);
 const CHAT_HTML = path.join(__dirname, 'chat.html');
+// 0 = Ollama decide; >0 limita as threads de inferencia (bom pra modelo pequeno)
+const CPU_THREADS = String(parseInt(process.env.CPU_THREADS || '0', 10) || 0);
 
 const server = http.createServer((req, res) => {
   if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
@@ -19,8 +21,15 @@ const server = http.createServer((req, res) => {
         res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
         return res.end('chat.html nao encontrado: ' + err.message);
       }
+      // injeta a config do servidor na pagina (nada sensivel aqui)
+      const html = buf
+        .toString('utf8')
+        .replace(
+          '<div id="cfg" style="display:none"></div>',
+          '<div id="cfg" style="display:none" data-threads="' + CPU_THREADS + '"></div>'
+        );
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-      res.end(buf);
+      res.end(html);
     });
   }
 

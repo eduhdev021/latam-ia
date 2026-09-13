@@ -174,6 +174,16 @@ egg = {
             "field_type": "text",
         },
         {
+            "name": "Threads de inferencia",
+            "description": "Limita as threads do llama.cpp. IMPORTANTE: em modelo pequeno (<3B) usar todas as vCPU ATRASA - o overhead de sincronizacao come o ganho. Use 4 a 8, ou o numero de nucleos FISICOS. 0 = deixar o Ollama decidir (usa tudo, ruim pra modelo pequeno).",
+            "env_variable": "CPU_THREADS",
+            "default_value": "6",
+            "user_viewable": True,
+            "user_editable": True,
+            "rules": "nullable|numeric|between:0,256",
+            "field_type": "text",
+        },
+        {
             "name": "Repo do chat (Git)",
             "description": "De onde o instalador baixa scripts/ui-chat.html e scripts/ui-proxy.js. Precisa ser publico - credencial dentro do server nao e segura.",
             "env_variable": "UI_REPO",
