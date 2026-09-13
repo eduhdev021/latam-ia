@@ -50,14 +50,29 @@ faça commit — a CI reclama se os dois divergirem.
 
 **Disco é a primeira parede, RAM é a segunda.**
 
-| item | quanto |
+Medido numa instalação limpa com `qwen3:0.6b` e Open WebUI ligado:
+
+| pasta | quanto | o que é |
+| --- | --- | --- |
+| `ollama/` | 69 MB | binário, depois de remover CUDA/ROCm/Vulkan (2,2 GB sem remover) |
+| `owui-venv/` | 2,9 GB | Open WebUI + torch CPU |
+| `.uv/` | 143 MB | o CPython 3.11 standalone |
+| `.cache/` | **889 MB** | modelos de embedding que o Open WebUI baixa do HuggingFace |
+| `models/` | 499 MB | `qwen3:0.6b` (`llama3.1:8b` = 4,9 GB) |
+| **total** | **4,4 GB** | |
+| pico da instalação | ~4,5 GB livres | download + extração antes de limpar |
+
+RAM, medida com a stack no ar e o modelo carregado:
+
+| processo | quanto |
 | --- | --- |
-| binário do Ollama | ~70 MB depois de remover CUDA/ROCm/Vulkan (~2,2 GB sem remover) |
-| Open WebUI (`owui-venv/`) | ~3 GB |
-| pico da instalação | ~4,5 GB livres |
-| modelo | `qwen3:0.6b` = 522 MB · `llama3.1:8b` = 4,9 GB |
-| RAM do Open WebUI | ~800 MB–1 GB, quase fixo |
-| RAM por modelo | ~4 GB para modelos pequenos |
+| Open WebUI (uvicorn + SQLite) | 673 MB |
+| `ollama serve` | 42 MB |
+| `llama-server` (qwen3:0.6b, ctx 2048, KV q8_0) | 682 MB |
+| **soma** | **1394 MB** |
+
+O `llama-server` é o que varia com o modelo: ~680 MB para 0.6B. Um 8B passa dos
+5 GB e não cabe num server pequeno.
 
 CPU precisa ter **AVX2**. Sem AVX o Ollama cai no backend `cpu` básico e fica
 muito lento (o start script avisa no console).
