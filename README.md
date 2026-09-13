@@ -104,7 +104,7 @@ proprio proxy com `UI_TOKEN` e se limpa no final):
 | Arquivo | O que cobre | Resultado |
 | --- | --- | --- |
 | `t-chat2.mjs` | markdown, highlight, tool calling, parâmetros, export, interrupção | **60/60** |
-| `t-features.mjs` | memória, fila, multi-modelo, fixar, `search`, PWA, gerenciar modelos | **67/67** |
+| `t-features.mjs` | memória, fila, multi-modelo, fixar, `search`, PWA, gerenciar modelos, editar/apagar mensagem | **76/76** |
 | `t-live.mjs` | ponta a ponta contra Ollama real (não mock) | **16/16** |
 | `t-live4.mjs` | as features novas contra Ollama real, com Wikipedia de verdade | **25/25** |
 | `t-live5.mjs` | API key de ponta a ponta contra proxy com `UI_TOKEN` | **8/8** |
@@ -341,6 +341,22 @@ Contra o próprio servidor com `UI_TOKEN`, a mesma chave vale como Bearer
 (comparação em tempo constante) — testado de ponta a ponta: chave certa
 carrega modelos e responde, chave errada vira erro visível, sem chave a API
 recusa (`t-live5.mjs`, 8/8).
+
+## Editar e apagar mensagens
+
+Cada mensagem tem ações próprias, como no Open WebUI:
+
+- **Suas mensagens** mostram *editar* e *apagar* ao passar o mouse.
+- **editar** devolve o texto à caixa de entrada e recorta o histórico até ali —
+  é só ajustar e mandar de novo.
+- **apagar** some com a mensagem: apagar uma resposta remove só ela; apagar uma
+  pergunta remove a troca inteira (pergunta + resposta). O botão pede
+  confirmação em dois cliques ("apagar?"), sem `window.confirm`.
+- Nas respostas, *editar* reabre a pergunta que gerou **aquela** resposta.
+
+O índice da mensagem é resolvido pelo `data-mi` gravado na bolha — contar bolhas
+não funciona porque resultados de ferramenta ficam no histórico sem desenhar
+bolha própria. Coberto pelo `t-features.mjs` (76/76).
 
 ## Gerenciar modelos (painel → Modelos)
 

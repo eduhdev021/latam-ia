@@ -245,6 +245,11 @@
 
   .foot { display: flex; align-items: center; gap: 9px; margin-top: 5px; font-size: 11.5px; color: var(--dim); flex-wrap: wrap; }
   .foot .act { color: var(--dim); font-size: 11.5px; padding: 2px 5px; border-radius: 5px; }
+  .msg.user .foot { justify-content: flex-end; opacity: 0; transition: opacity .13s; margin-top: 3px; }
+  .msg.user:hover .foot, .msg.user:focus-within .foot { opacity: 1; }
+  .msg.user .foot .act.del:hover { color: var(--danger); }
+  .msg.user .foot { opacity: 0; transition: opacity .12s; }
+  .msg.user:hover .foot, .msg.user:focus-within .foot { opacity: 1; }
   .foot .act:hover { color: var(--text); background: var(--panel-2); }
   .foot .toks { color: var(--dim); }
   .err { color: #ff9a9a; }
@@ -1183,10 +1188,12 @@
           return;
         }
         var el = addMessage(m.role);
+        el.closest('.msg').setAttribute('data-mi', i);
         if (m.thinking) drawThinking(el.parentNode, m.thinking);
         if (m.images && m.images.length) drawImages(el.parentNode, m.images);
         el.innerHTML = md(m.content || '', false);
         if (m.role === 'assistant') footer(el, m);
+        else userFooter(el, i);
       });
     }
     renderChats();
@@ -1334,8 +1341,27 @@
     }
     var copyBtn = act('copiar', function () { copyText(el.textContent, copyBtn, 'copiar'); });
     act('regenerar', function () { regenerate(el); });
-    if (el.closest('.msg.assistant')) {
-      act('editar', function () { editLastUser(); });
+    if (el.closest && el.closest('.msg.assistant')) {
+      // data-mi = indice exato no historico, posto no openChat e ao fim do
+      // stream. Contar bolhas .msg NAO serve: entradas role:'tool' ficam no
+      // array mas nao desenham bolha, e a contagem desalinha. Sem data-mi
+      // (bolha de erro ou de modelo secundario, que nao entra no historico),
+      // editar cai na ultima pergunta e o apagar nem aparece.
+      var hostMsg = el.closest('.msg');
+      var miAttr = hostMsg.getAttribute('data-mi');
+      var mi = miAttr === null || miAttr === undefined ? NaN : parseInt(miAttr, 10);
+      if (isNaN(mi)) mi = null;
+      act('editar', function () {
+        if (mi !== null) {
+          var cc = current();
+          for (var j = mi - 1; cc && j >= 0; j--) if (cc.messages[j].role === 'user') { editAt(j); return; }
+        }
+        editLastUser();
+      });
+      if (mi !== null) {
+        var del = act('apagar', function () { armAct(del, 'apagar?', function () { deleteAt(mi); }); });
+        del.className = 'act del';
+      }
     }
     el.parentNode.appendChild(f);
   }
@@ -1670,6 +1696,8 @@
     var userEl = addMessage('user');
     if (images.length) drawImages(userEl.parentNode, images.map(function (i) { return i.data; }));
     userEl.innerHTML = md(text, false);
+    userEl.closest('.msg').setAttribute('data-mi', c.messages.length - 1);
+    userFooter(userEl, c.messages.length - 1);
 
     if (overrideText === undefined) { input.value = ''; autoresize(); }
     pendingImages = [];
@@ -1701,12 +1729,28 @@
     runTurn(modelSel.value, null);
   }
 
-  function editLastUser() {
+  // Acoes por mensagem: editar/apagar em qualquer ponto do historico.
+  // armAct = confirmacao em dois cliques no proprio botao (sem window.confirm,
+  // que bloqueia a interface - mesmo padrao do apagar de modelos).
+  function armAct(btn, armedLabel, fn) {
+    if (btn.dataset.armed !== '1') {
+      btn.dataset.armed = '1';
+      btn.dataset.orig = btn.textContent;
+      btn.textContent = armedLabel;
+      setTimeout(function () {
+        if (btn.isConnected && btn.dataset.armed === '1') { btn.dataset.armed = ''; btn.textContent = btn.dataset.orig; }
+      }, 3000);
+      return;
+    }
+    btn.dataset.armed = '';
+    btn.textContent = btn.dataset.orig;
+    fn();
+  }
+
+  function editAt(idx) {
     var c = current();
-    if (!c) return;
-    var idx = -1;
-    for (var i = c.messages.length - 1; i >= 0; i--) if (c.messages[i].role === 'user') { idx = i; break; }
-    if (idx === -1) { toast('sem mensagem sua para editar'); return; }
+    if (!c || !c.messages[idx] || c.messages[idx].role !== 'user') { toast('nada para editar'); return; }
+    if (busy) { toast('aguarde a resposta terminar'); return; }
     input.value = c.messages[idx].content || '';
     autoresize();
     input.focus();
@@ -1714,6 +1758,49 @@
     persistChats();
     openChat(c.id);
     toast('edite e envie de novo');
+  }
+
+  function deleteAt(idx) {
+    var c = current();
+    if (!c || !c.messages[idx]) return;
+    if (busy) { toast('aguarde a resposta terminar'); return; }
+    var m = c.messages[idx];
+    var end = idx + 1;
+    if (m.role === 'user') {
+      // apaga a troca inteira: a pergunta e a resposta dela (ate a proxima pergunta)
+      while (end < c.messages.length && c.messages[end].role !== 'user') end++;
+    } else {
+      // resposta: leva junto os resultados de ferramenta pendurados nela
+      while (end < c.messages.length && c.messages[end].role === 'tool') end++;
+    }
+    c.messages.splice(idx, end - idx);
+    persistChats();
+    openChat(c.id);
+    toast(m.role === 'user' ? 'pergunta e resposta apagadas' : 'mensagem apagada');
+  }
+
+  function userFooter(el, idx) {
+    var f = document.createElement('div');
+    f.className = 'foot';
+    function act(label, cls, fn) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'act' + (cls ? ' ' + cls : '');
+      b.textContent = label;
+      b.addEventListener('click', fn);
+      f.appendChild(b);
+      return b;
+    }
+    act('editar', '', function () { editAt(idx); });
+    var del = act('apagar', 'del', function () { armAct(del, 'apagar?', function () { deleteAt(idx); }); });
+    el.parentNode.appendChild(f);
+  }
+
+  function editLastUser() {
+    var c = current();
+    if (!c) return;
+    for (var i = c.messages.length - 1; i >= 0; i--) if (c.messages[i].role === 'user') { editAt(i); return; }
+    toast('sem mensagem sua para editar');
   }
 
   // Multi-modelo: a mesma pergunta vai para todos os modelos marcados, cada um
@@ -1779,6 +1866,8 @@
           c.updatedAt = Date.now();
           persistChats();
           renderChats();
+          var hmi = el.closest ? el.closest('.msg') : null;
+          if (hmi) hmi.setAttribute('data-mi', c.messages.length - 1);
         }
         footer(el, { model: model, ms: ms, interrupted: true });
         if (!isSecondary) {
@@ -1806,6 +1895,8 @@
       c.updatedAt = Date.now();
       persistChats();
       renderChats();
+      var hm = el.closest ? el.closest('.msg') : null;
+      if (hm) hm.setAttribute('data-mi', c.messages.length - 1);
       footer(el, meta);
       setBusy(false);
       status('');

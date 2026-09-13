@@ -129,9 +129,9 @@ const sysOf = (body) => (body.messages.find((m) => m.role === 'system') || {}).c
      b.d.querySelectorAll('.msg.assistant').length);
   const whos = [...b.d.querySelectorAll('.msg.assistant .who')].map((w) => w.textContent);
   ok(whos.some((w) => /llama3\.2|qwen3/.test(w)), 'bolha diz de qual modelo veio', whos);
-  ok(await until(() => b.d.querySelectorAll('.foot').length === 2), 'dois footers',
-     b.d.querySelectorAll('.foot').length);
-  const foots = [...b.d.querySelectorAll('.foot')].map((f) => f.textContent);
+  ok(await until(() => b.d.querySelectorAll('.msg.assistant .foot').length === 2), 'dois footers',
+     b.d.querySelectorAll('.msg.assistant .foot').length);
+  const foots = [...b.d.querySelectorAll('.msg.assistant .foot')].map((f) => f.textContent);
   ok(foots.some((f) => /comparacao/.test(f)), 'footer marca como comparacao', foots);
 }
 
@@ -311,6 +311,57 @@ const sysOf = (body) => (body.messages.find((m) => m.role === 'system') || {}).c
   const delReq = b.state.reqs.find((r) => r.url.includes('/api/delete'));
   ok(delReq.opts.method === 'DELETE', 'delete e DELETE', delReq.opts.method);
   ok(JSON.parse(delReq.opts.body).name === name, 'delete manda o nome certo', delReq.opts.body);
+}
+
+// ------------------------------------------- acoes por mensagem (editar/apagar)
+{
+  console.log('\n[acoes por mensagem] editar/apagar em qualquer ponto');
+  const b = boot();
+  await ready(b);
+  const chatsOf = () => JSON.parse(b.w.localStorage.getItem('latam.chats'))[0].messages;
+  const idle = () => until(() => !b.d.getElementById('send').classList.contains('stop'));
+
+  sendMsg(b, 'pergunta um');
+  await until(() => b.state.sent.length === 1);
+  await until(() => b.d.querySelectorAll('.msg.assistant .foot').length === 1);
+  await idle();
+
+  const userActs = [...b.d.querySelectorAll('.msg.user .foot .act')].map((x) => x.textContent);
+  ok(userActs.join(',') === 'editar,apagar', 'bolha do usuario tem editar e apagar', userActs);
+  ok(!!b.d.querySelector('.msg.assistant .foot .act.del'), 'resposta tambem tem apagar');
+
+  sendMsg(b, 'pergunta dois');
+  await until(() => b.state.sent.length === 2);
+  await until(() => b.d.querySelectorAll('.msg.assistant .foot').length === 2);
+  await idle();
+  ok(chatsOf().length === 4, 'historico tem 2 trocas', chatsOf().length);
+
+  // editar a PRIMEIRA pergunta: texto volta ao input e o historico recorta ate la
+  b.d.querySelector('.msg.user .foot .act').dispatchEvent(new b.w.Event('click', { bubbles: true }));
+  ok(b.d.getElementById('input').value === 'pergunta um', 'editar devolve o texto ao input', b.d.getElementById('input').value);
+  ok(chatsOf().length === 0, 'editar recorta o historico ate a mensagem', chatsOf().length);
+
+  // apagar resposta: 1o clique arma, 2o apaga so a resposta
+  sendMsg(b, 'pergunta tres');
+  await until(() => b.state.sent.length === 3);
+  await until(() => b.d.querySelectorAll('.msg.assistant .foot').length === 1);
+  await idle();
+  b.d.querySelector('.msg.assistant .foot .act.del').dispatchEvent(new b.w.Event('click', { bubbles: true }));
+  ok(chatsOf().length === 2, '1o clique so arma (nada apagado)', chatsOf().length);
+  b.d.querySelector('.msg.assistant .foot .act.del').dispatchEvent(new b.w.Event('click', { bubbles: true }));
+  ok(chatsOf().length === 1 && chatsOf()[0].role === 'user', 'resposta apagada, pergunta fica', chatsOf().map((m) => m.role));
+
+  // apagar pergunta: leva a troca inteira (pergunta + resposta)
+  sendMsg(b, 'pergunta quatro');
+  await until(() => b.state.sent.length === 4);
+  await until(() => b.d.querySelectorAll('.msg.assistant .foot').length === 2);
+  await idle();
+  // antes: [user 'pergunta tres'] (a resposta dela ja foi apagada acima) + a
+  // troca 'pergunta quatro'. Apagar a pergunta quatro leva a resposta dela.
+  b.d.querySelectorAll('.msg.user .foot .act.del')[1].dispatchEvent(new b.w.Event('click', { bubbles: true }));
+  b.d.querySelectorAll('.msg.user .foot .act.del')[1].dispatchEvent(new b.w.Event('click', { bubbles: true }));
+  ok(chatsOf().length === 1 && chatsOf()[0].role === 'user', 'pergunta quatro e a resposta dela sumiram', chatsOf().map((m) => m.role + ':' + m.content));
+  ok(chatsOf()[0].content === 'pergunta tres', 'sobrou a pergunta tres (sem resposta, apagada antes)', chatsOf()[0].content);
 }
 
 console.log('\n================================');

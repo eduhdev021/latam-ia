@@ -29,8 +29,9 @@ function sendMsg(b, text) {
   await until(() => b.d.querySelectorAll('.msg.assistant').length === 1);
   const txt = await until(() => /Tudo bem/.test(b.d.querySelector('.msg.assistant .content').textContent));
   ok(txt, 'resposta apareceu', b.d.querySelector('.msg.assistant .content').textContent);
-  ok(/tok\/s/.test(b.d.querySelector('.foot').textContent), 'footer tem tok/s', b.d.querySelector('.foot').textContent);
-  ok(b.d.querySelectorAll('.foot .act').length === 3, 'footer tem 3 acoes', b.d.querySelectorAll('.foot .act').length);
+  ok(/tok\/s/.test(b.d.querySelector('.msg.assistant .foot').textContent), 'footer tem tok/s', b.d.querySelector('.msg.assistant .foot').textContent);
+  const acts = [...b.d.querySelectorAll('.msg.assistant .foot .act')].map((a) => a.textContent);
+  ok(acts.join(',') === 'copiar,regenerar,editar,apagar', 'footer tem copiar/regenerar/editar/apagar', acts);
   // b.w.close() removido: fechava a janela e um fetch pendurado quebrava no teste seguinte
 }
 
