@@ -14,6 +14,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const https = require('https');
 
 const PUBLIC_PORT = parseInt(process.env.SERVER_PORT || '11434', 10);
 const UPSTREAM_HOST = '127.0.0.1';
@@ -95,6 +96,142 @@ function readBody(req) {
   });
 }
 loadSessions();
+
+// ----------------------------------------------------------------- PWA
+// Icone em SVG inline: nao precisa de binario no repo nem de CDN.
+const ICON =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+  '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
+  '<stop offset="0" stop-color="#2f6feb"/><stop offset="1" stop-color="#7b4dff"/>' +
+  '</linearGradient></defs>' +
+  '<rect width="64" height="64" rx="14" fill="url(#g)"/>' +
+  '<text x="32" y="43" font-family="system-ui,sans-serif" font-size="32" ' +
+  'font-weight="700" fill="#fff" text-anchor="middle">L</text></svg>';
+
+const MANIFEST = JSON.stringify({
+  name: 'LATAM IA',
+  short_name: 'LATAM IA',
+  description: 'Chat local rodando no seu servidor',
+  start_url: '/',
+  scope: '/',
+  display: 'standalone',
+  background_color: '#0a0c10',
+  theme_color: '#0a0c10',
+  lang: 'pt-BR',
+  icons: [
+    { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+    { src: '/icon.svg', sizes: '512x512', type: 'image/svg+xml', purpose: 'maskable' },
+  ],
+});
+
+// Cacheia so o shell (a pagina). Requisicao de API NUNCA entra no cache -
+// resposta de modelo nao pode ficar guardada. Se o servidor cair, o app abre
+// e mostra que esta offline em vez de servir conversa velha.
+const SERVICE_WORKER = `
+const SHELL = '/';
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open('latam-shell').then((c) => c.add(SHELL)));
+  self.skipWaiting();
+});
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== 'latam-shell').map((k) => caches.delete(k))))
+  );
+  self.clients.claim();
+});
+self.addEventListener('fetch', (e) => {
+  const u = new URL(e.request.url);
+  if (u.origin !== self.location.origin) return;
+  // so a pagina vai pro cache; API e busca sempre vao pra rede
+  if (u.pathname !== '/' && u.pathname !== '/index.html') return;
+  e.respondWith(
+    fetch(e.request)
+      .then((r) => {
+        const copy = r.clone();
+        caches.open('latam-shell').then((c) => c.put(SHELL, copy));
+        return r;
+      })
+      .catch(() => caches.match(SHELL))
+  );
+});
+`;
+
+// ----------------------------------------------------------------- busca
+// Busca na web sem precisar de chave de API. A Wikipedia e a unica fonte que
+// testei que funciona daqui sem anti-bot (DuckDuckGo devolve 202, Mojeek 403).
+// Se o provedor mudar, o modelo recebe o erro e responde sem a busca.
+function httpGet(target, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      target,
+      { headers: { 'user-agent': 'LATAM-IA/1.0 (chat local; +https://github.com/eduhdev021/latam-ia)' }, timeout: timeoutMs },
+      (r) => {
+        if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
+          r.resume();
+          return resolve(httpGet(new URL(r.headers.location, target).toString(), timeoutMs));
+        }
+        let body = '';
+        r.setEncoding('utf8');
+        r.on('data', (c) => {
+          body += c;
+          if (body.length > 2 * 1024 * 1024) r.destroy();
+        });
+        r.on('end', () => resolve({ status: r.statusCode || 0, body }));
+      }
+    );
+    req.on('timeout', () => {
+      req.destroy(new Error('timeout de ' + timeoutMs + 'ms'));
+    });
+    req.on('error', reject);
+  });
+}
+
+const stripTags = (s) =>
+  String(s)
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&#\d+;|&[a-z]+;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+async function webSearch(query, lang) {
+  const base = 'https://' + lang + '.wikipedia.org';
+  // 1. procura os artigos
+  const s = await httpGet(
+    base + '/w/api.php?action=query&list=search&format=json&srlimit=5&srsearch=' + encodeURIComponent(query),
+    8000
+  );
+  if (s.status !== 200) throw new Error('wikipedia respondeu ' + s.status);
+  let data;
+  try {
+    data = JSON.parse(s.body);
+  } catch (e) {
+    throw new Error('resposta da wikipedia nao e JSON');
+  }
+  const hits = ((data.query || {}).search || []).slice(0, 3);
+  if (!hits.length) return { query: query, results: [], note: 'nada encontrado' };
+
+  // 2. busca o resumo de cada um em paralelo
+  const results = await Promise.all(
+    hits.map((h) =>
+      httpGet(base + '/api/rest_v1/page/summary/' + encodeURIComponent(h.title), 8000)
+        .then((r) => {
+          try {
+            const d = JSON.parse(r.body);
+            return {
+              title: d.title || h.title,
+              url: (d.content_urls || {}).desktop ? d.content_urls.desktop.page : base + '/wiki/' + encodeURIComponent(h.title),
+              snippet: d.extract || stripTags(h.snippet || ''),
+            };
+          } catch (e) {
+            return { title: h.title, url: base + '/wiki/' + encodeURIComponent(h.title), snippet: stripTags(h.snippet || '') };
+          }
+        })
+        .catch(() => ({ title: h.title, url: base + '/wiki/' + encodeURIComponent(h.title), snippet: stripTags(h.snippet || '') }))
+    )
+  );
+  return { query: query, source: 'wikipedia:' + lang, results: results };
+}
+
 
 // ----------------------------------------------------------------- respostas
 function json(res, code, obj, headers) {
@@ -211,9 +348,42 @@ const server = http.createServer((req, res) => {
     return json(res, 401, { error: 'nao autenticado - faca login em /login' });
   }
 
-  if (p === '/favicon.ico') {
-    res.writeHead(204);
-    return res.end();
+  // ---------------------------------------------------------------- PWA
+  // Service worker e manifest tem que ser arquivos reais na raiz: data URI nao
+  // funciona pra service worker (o navegador exige same-origin + escopo).
+  if (p === '/sw.js') {
+    res.writeHead(200, {
+      'content-type': 'application/javascript; charset=utf-8',
+      'cache-control': 'no-store',
+      'service-worker-allowed': '/',
+    });
+    return res.end(SERVICE_WORKER);
+  }
+  if (p === '/manifest.webmanifest') {
+    res.writeHead(200, { 'content-type': 'application/manifest+json; charset=utf-8' });
+    return res.end(MANIFEST);
+  }
+  if (p === '/favicon.ico' || p === '/icon.svg') {
+    res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'max-age=86400' });
+    return res.end(ICON);
+  }
+
+  // ---------------------------------------------------------------- busca
+  // /search?q=... faz a busca no servidor, nao no navegador. Motivo: CORS.
+  // A Wikipedia ate permite cross-origin, mas a maioria dos provedores nao,
+  // e o navegador bloquearia. Aqui o proxy pede e devolve JSON limpo.
+  if (p === '/search') {
+    return readBody(req)
+      .then(() => {
+        const q = (url.searchParams.get('q') || '').trim().slice(0, 400);
+        if (!q) return json(res, 400, { error: 'faltou q' });
+        const lang = (url.searchParams.get('lang') || 'pt').slice(0, 8);
+        return webSearch(q, lang).then(
+          (r) => json(res, 200, r),
+          (e) => json(res, 502, { error: e.message })
+        );
+      })
+      .catch((e) => json(res, 500, { error: e.message }));
   }
 
   const headers = Object.assign({}, req.headers, {

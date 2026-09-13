@@ -14,9 +14,11 @@ são removidas na instalação.
 | `egg-ollama.json` | a egg — é só importar no painel |
 | `scripts/ollama-install.sh` | script de instalação embutido na egg (fonte legível) |
 | `scripts/ollama-start.sh` | startup que a instalação gera em `/home/container/ollama-start.sh` |
-| `scripts/ui-proxy.js` | sidecar Node que serve o chat e faz proxy da API |
+| `scripts/ui-proxy.js` | sidecar Node: serve o chat, o PWA e a rota `/search`, e faz proxy da API |
 | `scripts/ui-chat.html` | o chat LATAM IA (arquivo único, sem CDN) |
-| `build_egg.py` | regenera `egg-ollama.json` e extrai as cópias legíveis |
+| `src/` | **fonte de verdade** dos três arquivos acima |
+| `tests/` | suíte jsdom + testes de ponta a ponta contra Ollama real |
+| `build_egg.py` | regenera `egg-ollama.json` copiando de `src/` para `scripts/` |
 
 ## O chat vem deste repositório
 
@@ -89,8 +91,26 @@ Testado no sandbox (Debian 13 / glibc 2.41 — mesma base da `yolks:nodejs_24`),
 
 ### Chat (testado com jsdom + Ollama real)
 
-Testes em `test/domtest/` (fora deste repo) rodam a página de verdade no jsdom, com `fetch` mockado devolvendo
+Testes em `tests/` rodam a página de verdade no jsdom, com `fetch` mockado devolvendo
 stream NDJSON e relógio dentro da página (`performance.now`) medindo cada paint.
+
+Suíte atual (roda com `node tests/t-*.mjs`, precisa de `npm i jsdom`):
+
+| Arquivo | O que cobre | Resultado |
+| --- | --- | --- |
+| `t-chat2.mjs` | markdown, highlight, tool calling, parâmetros, export, interrupção | **60/60** |
+| `t-features.mjs` | memória, fila, multi-modelo, fixar, `search`, PWA | **50/50** |
+| `t-live.mjs` | ponta a ponta contra Ollama real (não mock) | **16/16** |
+| `t-live4.mjs` | as features novas contra Ollama real, com Wikipedia de verdade | **25/25** |
+
+Dois bugs que a suíte ao vivo pegou e o jsdom sozinho não pegaria:
+
+- **Trocar de modelo matava o tool calling.** O modelo inicial não suportava
+  ferramentas, o checkbox `ferramentas` era desligado, e ao trocar para um
+  modelo compatível ele **continuava desligado** — o usuário ficava sem tool
+  calling sem ver porquê. Agora a preferência é guardada e restaurada.
+- **`web_search` nunca era chamado** pelo `qwen3:0.6b` (0/15). Renomear para
+  `search` resolveu (5/5) — detalhe na seção *O que veio do Open WebUI*.
 
 - **stream-test** — o texto aparece na tela **antes** do stream terminar, chunk a chunk
   (`t=60ms "Ola!"` → `t=90ms "Ola! Tudo"` → ...), e o texto final é igual ao stream. 5/5 asserções.
@@ -217,8 +237,15 @@ Atualizar o chat = `git push` + *Reinstall Server*. Não precisa mexer na egg.
 
 ## O que o chat tem
 
-Arquivo único (`scripts/ui-chat.html`, ~89 KB), sem build e sem dependência npm.
-Tudo roda no navegador; o `proxy.js` só serve a página e repassa o resto pra API.
+Arquivo único (`scripts/ui-chat.html`, ~107 KB), sem build e sem dependência npm.
+Tudo roda no navegador; o `proxy.js` só serve a página, faz a busca na web e
+repassa o resto pra API.
+
+Várias das features abaixo foram implementadas a partir do que o
+[Open WebUI](https://github.com/open-webui/open-webui) faz — só as que rodam
+**sem backend**, porque aqui o chat é um arquivo estático servido por um proxy
+de ~17 KB. O que exige servidor (RBAC, LDAP/SSO, banco vetorial, canais) não
+entra e não é prometido.
 
 **Conversas** — múltiplas conversas com sidebar, busca, agrupamento por data
 (hoje / ontem / 7 dias / antigas), renomear (duplo clique), apagar com
@@ -257,6 +284,32 @@ atual.
 config, `Esc` fecha.
 
 **Autenticação** — veja a seção abaixo.
+
+## O que veio do Open WebUI
+
+| Feature | Como está aqui |
+| --- | --- |
+| **Memória persistente** | Painel → *Memória*. Fatos salvos em `localStorage` são injetados como mensagem de `system` em **todas** as conversas. Até 40 fatos, liga/desliga sem apagar. |
+| **Multi-modelo** | Checkbox *multi* na barra. A mesma pergunta vai em paralelo para até 4 modelos, cada resposta na sua bolha com o nome do modelo. Só a resposta do modelo principal entra no histórico — as outras são comparacão e não poluem o contexto. |
+| **Fila de mensagens** | Enviar durante uma resposta **não corta mais a geração**: a mensagem entra na fila (até 10), visível acima do composer, e sai quando a resposta atual terminar. Interromper de propósito continua parando tudo. |
+| **Web search** | Ferramenta `search` (Wikipedia, **sem chave de API**). A busca roda no `proxy.js`, não no navegador, porque provedor de busca normalmente não libera CORS. |
+| **PWA** | `manifest.webmanifest`, `sw.js` e `icon.svg` servidos pelo proxy. Dá pra instalar como app e o shell abre offline. Requisição de API **nunca** entra no cache. |
+| **Conversas fixadas** | Botão *Fixar* na sidebar: grupo "Fixadas" no topo, com estrela. |
+
+Duas coisas que medi antes de implementar:
+
+- **Multi-modelo é viável no navegador.** Duas `POST /api/chat` simultâneas ao
+  mesmo Ollama voltaram `200` em 1,65 s e 2,05 s — o servidor aceita concorrência.
+- **O nome da ferramenta importa.** Com o nome `web_search`, o `qwen3:0.6b`
+  *pensava* em chamar a ferramenta e não emitia o tool call: **0 acertos em 15
+  tentativas**, com a resposta saindo vazia. Renomeei para `search` e foram
+  **5 de 5**. O sublinhado parece confundir o template de ferramentas do modelo
+  pequeno. Se você trocar o nome, meça de novo.
+
+**Não implementado** (exige backend de verdade): RAG com banco vetorial, notas,
+canais, voz (STT/TTS), analytics/ELO, RBAC, LDAP/SSO/SCIM, plugins e MCP.
+
+**Autenticação** — veja a seção acima.
 
 ## Autenticação
 
