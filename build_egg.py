@@ -204,6 +204,16 @@ egg = {
             "field_type": "text",
         },
         {
+            "name": "Token de acesso do chat",
+            "description": "Senha para abrir o chat. VAZIO (padrao) = chat aberto: qualquer pessoa com a URL usa o chat E a API do Ollama, sem login. Se o server tiver allocation publica, DEFINA um token. Vale tambem para chamadas diretas de API: o proxy exige a sessao. Trocar o token invalida as sessoes antigas no proximo restart.",
+            "env_variable": "UI_TOKEN",
+            "default_value": "",
+            "user_viewable": True,
+            "user_editable": True,
+            "rules": "nullable|string|max:128",
+            "field_type": "text",
+        },
+        {
             "name": "Versao do Ollama",
             "description": "'latest' ou uma tag do GitHub (ex.: v0.34.0). Usada so durante a instalacao/reinstall.",
             "env_variable": "OLLAMA_VERSION",

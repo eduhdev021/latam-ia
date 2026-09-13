@@ -193,6 +193,79 @@ Os modelos ficam em `/home/container/models` e contam no limite de disco do serv
 - **`strip_ansi: true`** porque o `ollama pull` imprime barra de progresso com códigos ANSI, que
   poluem o console do painel.
 
+## O que o chat tem
+
+Arquivo único (`scripts/ui-chat.html`, ~89 KB), sem build e sem dependência npm.
+Tudo roda no navegador; o `proxy.js` só serve a página e repassa o resto pra API.
+
+**Conversas** — múltiplas conversas com sidebar, busca, agrupamento por data
+(hoje / ontem / 7 dias / antigas), renomear (duplo clique), apagar com
+confirmação. Tudo em `localStorage`, sobrevive ao reload.
+
+**Markdown completo** — cabeçalhos, negrito/itálico/riscado, listas aninhadas,
+listas ordenadas, tabelas com alinhamento, blockquote, `hr`, links, imagens,
+código inline e blocos com **syntax highlight próprio** (JS/TS, Python, Go,
+shell, C/C++/Rust, SQL, HTML, CSS, YAML), label de linguagem e botão copiar.
+LaTeX via KaTeX (CDN, desligável no painel).
+
+**Tool calling** — o chat detecta `capabilities` via `/api/show` e só habilita
+ferramentas se o modelo suportar. Vem com duas que rodam no navegador:
+`get_current_time` (fuso IANA) e `calculator`. A chamada e o resultado aparecem
+na conversa como cartão. Verificado de ponta a ponta com `qwen3:0.6b`: o modelo
+pede a ferramenta, o chat executa, devolve como `role:tool`, e o modelo responde
+com o resultado.
+
+**Parâmetros** — temperature, top_p, top_k, num_predict, repeat/presence/
+frequency penalty, seed, num_ctx. Por modelo, persistidos. O painel **começa nos
+valores que o próprio Modelfile declara** (lidos de `/api/show`), não em chute.
+
+**System prompt**, formato de saída (livre / JSON forçado / JSON Schema),
+truncar histórico, flash attention.
+
+**Ações** — copiar, regenerar, editar a última mensagem sua, parar a geração
+(salva o trecho que já veio). Métricas no rodapé: modelo, tempo, tok/s, tokens.
+
+**Anexos de imagem** — colar (Ctrl+V), arrastar ou selecionar. Só habilita se o
+modelo tiver `vision` nas capabilities; senão avisa e não manda.
+
+**Exportar / importar** — JSON de todas as conversas, ou Markdown da conversa
+atual.
+
+**Tema** claro/escuro. **Atalhos**: `Ctrl+K` nova conversa, `Ctrl+/` painel de
+config, `Esc` fecha.
+
+**Autenticação** — veja a seção abaixo.
+
+## Autenticação
+
+A API do Ollama **não tem autenticação nenhuma**. Quem expõe a allocation na
+internet deixa o modelo aberto pra qualquer um. Por isso:
+
+| `UI_TOKEN` | comportamento |
+|---|---|
+| vazio (padrão) | chat e API abertos. O console avisa no boot. |
+| definido | `/login` exige o token; a API também passa a exigir a sessão. |
+
+Como funciona: o proxy compara o token em **tempo constante**
+(`crypto.timingSafeEqual`, pra não vazar byte a byte), emite um cookie de sessão
+aleatório de 24 bytes com 30 dias de validade, e grava as sessões em
+`ui/.session.json` (modo 0600) pra sobreviver ao restart. `Authorization: Bearer`
+também vale, então script continua funcionando:
+
+```bash
+# pega a sessao
+curl -c c.txt -X POST -d 'token=SEU_TOKEN' https://SEU_SERVIDOR/login
+# usa
+curl -b c.txt https://SEU_SERVIDOR/api/tags
+```
+
+Trocar o `UI_TOKEN` invalida as sessões no próximo restart.
+
+**Limitação honesta:** isso é um portão, não é segurança de produção. O token vai
+em texto puro se não houver TLS na frente, não tem rate limit nem lockout, e é
+compartilhado (não há usuários separados). Pra expor na internet de verdade,
+ponha um reverse proxy com TLS e basic auth na frente.
+
 ## Threads de inferência (importante)
 
 Modelo pequeno em CPU com thread demais fica **mais lento**, não mais rápido — o overhead de
