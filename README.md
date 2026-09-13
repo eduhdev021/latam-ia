@@ -262,6 +262,19 @@ server — sobrevive a restart, **não** a Reinstall.
 > Verificado até a URL, a limpeza da saída e a lógica de confirmação. Não
 > completei uma autorização real: não tenho conta em ollama.com para testar.
 
+## Reimportar a egg (variáveis novas)
+
+Variável nova só chega no servidor se a egg for reimportada — atualizar o start
+script pelo `curl` não acrescenta variável. A egg tem **uuid fixo**
+(`d8d71dca-384c-470f-ab85-1305a055ea7b`), então importar o JSON de novo atualiza
+a egg existente em vez de criar uma duplicada. Antes disso não tinha uuid, e o
+painel gerava um novo a cada importação — quem importou uma versão antiga pode
+precisar adicionar a variável à mão em *Admin → Nests → egg → Variables*.
+
+> O comportamento de importação do Pterodactyl não foi testado aqui (não há
+> painel neste ambiente). A parte verificada é que o uuid agora é estável entre
+> builds.
+
 ## Por que o start script vem do Git
 
 O painel corta o script da egg em ~64 KiB (medido: 65.614 bytes). Com o
@@ -304,10 +317,10 @@ motivo na tela — melhor falhar cedo do que subir um server sem o que executar.
 
 ## O que foi testado de verdade
 
-Três suítes, **148 asserts**:
+Três suítes, **150 asserts**:
 
 ```
-node tests/t-egg.mjs        # 87 asserts
+node tests/t-egg.mjs        # 89 asserts
 node tests/t-start.mjs      # 51 asserts
 node tests/t-api-live.mjs   # 10 asserts (pula sem Ollama no ar)
 ```

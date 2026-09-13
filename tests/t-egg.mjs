@@ -180,5 +180,12 @@ for (const [v, d] of [["CONTEXT_LENGTH", "2048"], ["KV_CACHE_TYPE", "q8_0"], ["F
 ok(read("src/ollama-start.sh").includes("check_memory"),
    "start script confere se modelo + interface cabem na RAM do container");
 
+// --------------------------------------------------- 9. uuid estavel (reimport atualiza)
+console.log("\n[9] a egg tem uuid fixo");
+ok(typeof egg.uuid === "string" && /^[0-9a-f-]{36}$/.test(egg.uuid),
+   `uuid presente e valido: ${egg.uuid}`);
+ok(egg.uuid === "d8d71dca-384c-470f-ab85-1305a055ea7b",
+   "uuid nao muda entre builds (reimport atualiza a mesma egg, nao cria duplicada)");
+
 console.log(`\n${fail === 0 ? "PASSOU" : "FALHOU"}: ${pass} asserts ok, ${fail} falhas`);
 process.exit(fail === 0 ? 0 : 1);
