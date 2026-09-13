@@ -15,8 +15,25 @@ são removidas na instalação.
 | `scripts/ollama-install.sh` | script de instalação embutido na egg (fonte legível) |
 | `scripts/ollama-start.sh` | startup que a instalação gera em `/home/container/ollama-start.sh` |
 | `scripts/ui-proxy.js` | sidecar Node que serve o chat e faz proxy da API |
-| `scripts/ui-chat.html` | a página de chat (arquivo único, sem CDN) |
+| `scripts/ui-chat.html` | o chat LATAM IA (arquivo único, sem CDN) |
 | `build_egg.py` | regenera `egg-ollama.json` e extrai as cópias legíveis |
+
+## O chat vem deste repositório
+
+Durante a instalação o script faz `git clone --depth 1` de `UI_REPO` (padrão
+`https://github.com/eduhdev021/latam-ia.git`) na ref `UI_REF` (padrão `main`) e copia
+`scripts/ui-chat.html` → `/home/container/ui/chat.html` e `scripts/ui-proxy.js` →
+`/home/container/ui/proxy.js`. O commit usado fica registrado em `ui/.git-ref`.
+
+**Pra atualizar o chat:** edite os arquivos aqui, dê push, e rode *Reinstall Server* no painel.
+Não precisa mexer na egg.
+
+Se o clone falhar (repo fora do ar, branch errada, sem `git` no container), o instalador avisa no
+console e usa a cópia embutida na egg — o server sobe do mesmo jeito. Testado dos dois jeitos.
+
+O repo é **público de propósito**: um repo privado exigiria credencial dentro do server, e
+qualquer subadmin com acesso a eggs conseguiria ler. Se precisar fechar, use uma deploy key
+read-only por node, nunca um PAT.
 
 ## Como funciona a porta única
 
@@ -72,7 +89,7 @@ Testado no sandbox (Debian 13 / glibc 2.41 — mesma base da `yolks:nodejs_24`),
 
 ### Chat (testado com jsdom + Ollama real)
 
-Testes em `test/domtest/` rodam a página de verdade no jsdom, com `fetch` mockado devolvendo
+Testes em `test/domtest/` (fora deste repo) rodam a página de verdade no jsdom, com `fetch` mockado devolvendo
 stream NDJSON e relógio dentro da página (`performance.now`) medindo cada paint.
 
 - **stream-test** — o texto aparece na tela **antes** do stream terminar, chunk a chunk
