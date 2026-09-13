@@ -132,6 +132,43 @@ Com `ENABLE_OPENWEBUI=false` a API é a do próprio Ollama na allocation:
 `/api/tags`, `/api/generate`, `/api/chat` e `/v1/*` (compatível com OpenAI), sem
 autenticação — nesse caso proteja com firewall ou não exponha a allocation.
 
+## "Ollama: Network Problem" no chat
+
+Essa mensagem vem do **frontend do Open WebUI**, não do Ollama. No bundle:
+
+```js
+.catch(f => { a = `Ollama: ${f?.error?.message ?? "Network Problem"}`; return [] })
+```
+
+Ela aparece quando a chamada **não completa** — se o Ollama tivesse respondido com
+erro, a tela mostraria a mensagem dele. Duas causas, as duas resolvidas no boot:
+
+**1. A URL do Ollama fica gravada no banco.** O Open WebUI escreve
+`config.ollama.base_urls` na **primeira** inicialização, e o `OLLAMA_BASE_URL` do
+ambiente **não** sobrescreve depois. Medido: subir com
+`OLLAMA_BASE_URL=http://127.0.0.1:19999` deixou o valor antigo intacto no banco.
+Se a porta interna mudou ou a URL foi digitada no painel, o chat quebra para
+sempre. `owui_fix_ollama_url()` corrige no boot:
+
+```
+[egg] conexao Ollama: ['http://SEU_IP:25565'] -> ['http://127.0.0.1:11434']
+```
+
+Manualmente: Admin Panel → Settings → **Connections** → *Ollama Base URL* →
+`http://127.0.0.1:11434`.
+
+**2. Corrida na subida.** O Open WebUI subia no mesmo instante que o Ollama, e se
+ele ainda não estivesse escutando a conexão era marcada como morta. Agora o
+script espera o `/api/version` responder (até 60 s) antes de entregar a
+allocation:
+
+```
+[egg] Esperando a API do Ollama em 127.0.0.1:11434 ... ok (1s)
+```
+
+Se passar de 60 s, o script avisa e manda olhar os logs acima — o erro do Ollama
+está lá.
+
 ## CORS: 403 sem explicação no modo API pura
 
 Com `ENABLE_OPENWEBUI=false` a API do Ollama fica exposta na allocation. O
@@ -394,11 +431,11 @@ motivo na tela — melhor falhar cedo do que subir um server sem o que executar.
 
 ## O que foi testado de verdade
 
-Três suítes, **163 asserts**:
+Três suítes, **172 asserts**:
 
 ```
 node tests/t-egg.mjs        # 92 asserts
-node tests/t-start.mjs      # 61 asserts
+node tests/t-start.mjs      # 70 asserts
 node tests/t-api-live.mjs   # 10 asserts (pula sem Ollama no ar)
 ```
 

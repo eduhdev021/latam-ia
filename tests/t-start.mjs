@@ -428,5 +428,47 @@ exit 0
   rmSync(base, { recursive: true, force: true });
 }
 
+// ------------------------------------------------- 14. URL do Ollama gravada no banco do OWUI
+{
+  console.log("\n[14] URL do Ollama no banco (env nao sobrescreve depois da 1a init)");
+  const src = readFileSync(join(import.meta.dirname, "..", "src", "ollama-start.sh"), "utf8");
+  ok(src.includes("owui_fix_ollama_url()"), "existe a funcao que corrige o banco");
+  ok(src.indexOf("owui_fix_ollama_url\n") > src.indexOf('export OLLAMA_BASE_URL='),
+     "e chamada depois de definir OLLAMA_BASE_URL");
+  ok(src.indexOf('curl -sS --max-time 2 -o /dev/null "http://127.0.0.1:${_ip}/api/version"')
+       < src.indexOf('exec "${OWUI_BIN}" serve'),
+     "espera o Ollama responder antes de entregar a allocation ao Open WebUI");
+  ok(src.includes("Network Problem"), "o aviso cita o sintoma que o usuario ve");
+
+  // funcional: banco com URL errada -> script corrige
+  const base = mkdtempSync(join(tmpdir(), "eggstart-"));
+  for (const d of ["ollama/bin", "owui-venv/bin", "open-webui", "stub-bin"]) mkdirSync(join(base, d), { recursive: true });
+  writeFileSync(join(base, "ollama", "VERSION"), "v0.0.0-teste\n");
+  writeFileSync(join(base, "ollama", "bin", "ollama"),
+    "#!/bin/bash\ncase \"$1\" in serve) sleep 3 ;; list) printf 'NAME\\n' ;; esac\nexit 0\n");
+  writeFileSync(join(base, "owui-venv", "bin", "open-webui"), "#!/bin/bash\necho OWUI-SUBIU\nexit 0\n");
+  writeFileSync(join(base, "stub-bin", "curl"), "#!/bin/bash\nexit 0\n");
+  for (const f of ["ollama/bin/ollama", "owui-venv/bin/open-webui", "stub-bin/curl"])
+    spawnSync("chmod", ["+x", join(base, f)]);
+  const db = join(base, "open-webui", "webui.db");
+  spawnSync("python3", ["-c",
+    "import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);" +
+    "c.execute(\"create table config(key text primary key, value text, updated_at int)\");" +
+    "c.execute(\"insert into config values('ollama.base_urls','[\\\"http://SEU_IP:25565\\\"]',0)\");" +
+    "c.commit()", db]);
+
+  const out = run(base, { ...COMMON, SERVER_PORT: "25565", ENABLE_OPENWEBUI: "true",
+                          PATH: join(base, "stub-bin") + ":" + process.env.PATH });
+  ok(out.includes("conexao Ollama:"), "imprime a correcao que fez");
+  ok(out.includes("http://SEU_IP:25565"), "mostra o valor errado que estava la");
+  ok(out.includes("http://127.0.0.1:11434"), "mostra o valor certo que entrou");
+  const after = spawnSync("python3", ["-c",
+    "import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute(" +
+    "\"select value from config where key='ollama.base_urls'\").fetchone()[0])", db]).stdout.toString().trim();
+  ok(after === '["http://127.0.0.1:11434"]', `banco realmente corrigido (${after})`);
+  ok(out.includes("OWUI-SUBIU"), "e o Open WebUI subiu depois");
+  rmSync(base, { recursive: true, force: true });
+}
+
 console.log(`\n${fail === 0 ? "PASSOU" : "FALHOU"}: ${pass} asserts ok, ${fail} falhas`);
 process.exit(fail === 0 ? 0 : 1);

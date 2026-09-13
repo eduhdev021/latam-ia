@@ -422,12 +422,45 @@ owui_fix_paths() {
     echo "[egg]             ${_sym} symlink(s) + ${_she} shebang(s) + pyvenv.cfg"
 }
 
+# O Open WebUI grava a URL do Ollama no banco (config.ollama.base_urls) na
+# PRIMEIRA inicializacao, e o OLLAMA_BASE_URL do ambiente NAO sobrescreve depois.
+# Medido: subir com OLLAMA_BASE_URL=http://127.0.0.1:19999 deixou o valor antigo
+# gravado intacto. Consequencia: se o banco tem uma URL que nao e mais a porta
+# interna, o chat mostra "Ollama: Network Problem" para sempre - o frontend faz
+#   catch(f => `Ollama: ${f?.error?.message ?? "Network Problem"}`)
+# quando a chamada nao completa. Corrige no boot em vez de exigir Reinstall.
+owui_fix_ollama_url() {
+    _db="${DATA_DIR}/webui.db"
+    [ -f "${_db}" ] || return 0
+    _py="${BASE_DIR}/owui-venv/bin/python3.11"
+    [ -x "${_py}" ] || _py="python3"
+    "${_py}" - "${_db}" "http://127.0.0.1:${OLLAMA_INTERNAL_PORT}" <<'PY'
+import json, sqlite3, sys
+db, want = sys.argv[1], sys.argv[2]
+c = sqlite3.connect(db)
+row = c.execute("select value from config where key='ollama.base_urls'").fetchone()
+if row is None:
+    sys.exit(0)
+try:
+    cur = json.loads(row[0])
+except Exception:
+    cur = None
+if cur == [want]:
+    sys.exit(0)
+c.execute("update config set value=? where key='ollama.base_urls'",
+          (json.dumps([want]),))
+c.commit()
+print(f"[egg] conexao Ollama: {cur} -> {[want]}")
+PY
+}
+
 if [ "${OWUI_WANTED}" = "true" ]; then
     OWUI_BIN="${BASE_DIR}/owui-venv/bin/open-webui"
     if [ -x "${OWUI_BIN}" ]; then
         owui_fix_paths
         export DATA_DIR="${BASE_DIR}/open-webui"
         export OLLAMA_BASE_URL="http://127.0.0.1:${OLLAMA_HOST##*:}"
+        owui_fix_ollama_url
         export WEBUI_NAME="${WEBUI_NAME:-LATAM IA}"
         # O Open WebUI vem com criacao de API key DESLIGADA (config.py:
         # ENABLE_API_KEYS default False) e responde 403 "API key creation is not
@@ -442,6 +475,29 @@ if [ "${OWUI_WANTED}" = "true" ]; then
         # o marcador "Listening on" segue funcionando) e o Open WebUI em primeiro
         # plano segurando a allocation.
         "${OLLAMA_BIN}" serve &
+        _opid=$!
+        # Sem espera, o Open WebUI sobe antes do Ollama estar escutando e marca a
+        # conexao como morta - o sintoma na tela e o mesmo "Ollama: Network
+        # Problem". Espera o /api/version responder antes de entregar a allocation.
+        _ip="${OLLAMA_HOST##*:}"
+        _i=0
+        printf '[egg] Esperando a API do Ollama em 127.0.0.1:%s ...' "${_ip}"
+        while [ "${_i}" -lt 60 ]; do
+            if ! kill -0 "${_opid}" 2>/dev/null; then
+                echo " o processo do Ollama MORREU."
+                break
+            fi
+            if curl -sS --max-time 2 -o /dev/null "http://127.0.0.1:${_ip}/api/version" 2>/dev/null; then
+                echo " ok (${_i}s)"
+                break
+            fi
+            _i=$((_i + 1)); sleep 1
+        done
+        if [ "${_i}" -ge 60 ]; then
+            echo " nao respondeu em 60 s."
+            echo "[egg] AVISO: o Open WebUI vai mostrar 'Ollama: Network Problem'."
+            echo "[egg]         Olhe acima deste ponto nos logs: o erro do Ollama esta la."
+        fi
         exec "${OWUI_BIN}" serve --host 0.0.0.0 --port "${SERVER_PORT}"
     else
         echo "[egg] AVISO: ENABLE_OPENWEBUI=true mas owui-venv/ nao existe."
