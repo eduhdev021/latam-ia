@@ -344,31 +344,43 @@ Além disso, validado com a stack real no ar (Ollama 0.34.0 + Open WebUI):
 - `POST /api/v1/chat/completions` → 200 (12 tok/s com `tinyllama`);
 - `api/version`, `api/tags`, `api/generate`, `api/chat` e streaming NDJSON.
 
-## Resposta em branco com `qwen3` (importante)
+## `qwen3`: raciocínio, resposta em branco e como desligar
 
-`qwen3` é modelo de **raciocínio**: ele pensa antes de responder, e o pensamento
-vai num campo separado. Com um teto de tokens curto o orçamento acaba no meio do
-pensamento e a resposta visível vem **vazia**. Medido com `qwen3:0.6b`, prompt
-"Diga OK":
+`qwen3` é modelo de **raciocínio**: ele pensa antes de responder e o pensamento
+vai num campo separado (`thinking` na API do Ollama, `reasoning_content` na do
+Open WebUI). Se o orçamento de tokens acabar no meio do pensamento, o campo de
+resposta vem **vazio** — parece travamento, mas não é.
 
-| `num_predict` | `response` | `thinking` | `done_reason` |
-| --- | --- | --- | --- |
-| 8 | **0 chars** | 24 chars | `length` |
-| 64 | **0 chars** | 251 chars | `length` |
-| 200 | **0 chars** | 914 chars | `length` |
+**Onde isso acontece.** Medido com `qwen3:0.6b`, prompt "Diga OK":
 
-Ou seja: **se você limitar "Max Tokens" no Open WebUI usando qwen3, a resposta
-pode vir em branco** — e parece que o servidor travou, mas não travou.
+| caminho | resultado |
+| --- | --- |
+| Ollama `/api/generate`, `num_predict` 8 / 64 / 200 | `response` **0 chars**, `thinking` 24 / 251 / 914 chars, `done_reason=length` |
+| Ollama `/api/chat`, `num_predict` 8 / 32 | `content` **0 chars**, `thinking` 23 / 105 chars |
+| Open WebUI `/api/v1/chat/completions`, `max_tokens` 8 / 16 / 32 / 64 | `content` **preenchido**, `finish_reason=stop` |
 
-Duas saídas:
+Ou seja: a resposta em branco aparece quando você chama a **API do Ollama**
+direto com `num_predict` limitado. Pelo Open WebUI **não** reproduziu — ele não
+repassa `max_tokens` como `num_predict` nesse caminho (todas as respostas vieram
+com `finish_reason=stop`, nunca `length`). Uma versão anterior deste README
+dizia o contrário; estava errada.
 
-- Aumente o limite de tokens (ou deixe sem limite).
-- Desligue o raciocínio. Pela API é o campo **raiz** `"think": false`, não uma
-  `option` — medido: `response: "Diga OK."`, `thinking: 0 chars`. No Open WebUI
-  isso fica nos Advanced Params do modelo (ele repassa `think` como parâmetro
-  raiz — `utils/payload.py`). `/no_think` no texto do prompt **não** funcionou
-  aqui, e `PARAMETER think false` no Modelfile é recusado
-  (`Error: unknown parameter 'think'`).
+**Como desligar o raciocínio.** É o campo **raiz** `"think": false` da requisição,
+não uma `option`:
+
+```
+sem  -> content '', reasoning_content 428-729 chars, 9.5 s
+com  -> content 'OK!', reasoning_content 0 chars,     0.4 s
+```
+
+Verificado criando o modelo pelo Open WebUI (`POST /api/v1/models/create` com
+`params: {"think": false}` — é o que a tela de Advanced Params grava): o
+`reasoning_content` caiu para 0, o que prova que o parâmetro chegou no Ollama.
+Num server de 2 cores o ganho de tempo é o que mais importa: **9,5 s → 0,4 s**.
+
+O que **não** funciona: `/no_think` no texto do prompt (testado: seguiu
+raciocinando) e `PARAMETER think false` no Modelfile
+(`Error: unknown parameter 'think'`).
 
 ## Limitações
 
