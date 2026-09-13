@@ -67,7 +67,43 @@ fi
 
 # Threads de inferencia. Em modelo pequeno (<3B), usar todas as vCPU ATRASA muito:
 # medido com 2 vCPU -> 1 thread: 27.8 tok/s | 2: 45.2 tok/s | 4: 0.2 tok/s (thrashing).
+# Teto de threads = vCPU que ESTE container enxerga.
+#
+# Por que nproc nao basta: nproc usa sched_getaffinity, que so reflete cpuset
+# (pinning). Pterodactyl/Wings pode limitar CPU por CFS quota (cgroup v2 cpu.max,
+# "quota period") em vez de cpuset - nesse caso nproc continua reportando todas
+# as cores do host. Ex.: "200% CPU / 2 cores" no painel.
+#
+# Ollama usa o runtime do Go, que le NumCPU via sched_getaffinity tambem. Entao
+# num cgroup limitado por quota ele cria 20 threads pra 2 cores de trabalho, e a
+# sincronizacao come tudo. (Ja observado: n_threads=20, warmup de 114s.)
+#
+# cpu.max = "<quota> <period>"; "max" = ilimitado. threads = quota/period.
 NCPU="$(nproc 2>/dev/null || echo 1)"
+CG_MAX=""
+for _cg in /sys/fs/cgroup/cpu.max /sys/fs/cgroup/cpu/cpu.cfs_quota_us; do
+    if [ -r "${_cg}" ]; then CG_MAX="${_cg}"; break; fi
+done
+if [ -n "${CG_MAX}" ]; then
+    if [ "${CG_MAX}" = "/sys/fs/cgroup/cpu/cpu.cfs_quota_us" ]; then
+        _q="$(cat "${CG_MAX}" 2>/dev/null || echo -1)"
+        _p="$(cat /sys/fs/cgroup/cpu/cpu.cfs_period_us 2>/dev/null || echo 100000)"
+    else
+        read -r _q _p < "${CG_MAX}" 2>/dev/null || true
+    fi
+    if [ -n "${_q:-}" ] && [ "${_q}" != "max" ] && [ "${_q}" -gt 0 ] 2>/dev/null \
+       && [ -n "${_p:-}" ] && [ "${_p}" -gt 0 ] 2>/dev/null; then
+        # teto inteiro: 150000/100000 = 1, nao 2. Duas threads brigando por 1.5
+        # core vao se throttlear no fim de cada periodo de 100ms e ficar pior
+        # do que uma thread so. Melhor sobrar core do que faltar.
+        _lim=$(( _q / _p ))
+        [ "${_lim}" -lt 1 ] && _lim=1
+        if [ "${_lim}" -lt "${NCPU}" ]; then
+            echo "[egg] cgroup limita CPU a ${_lim} core(s), quota ${_q}/${_p} - nproc dizia ${NCPU}"
+            NCPU="${_lim}"
+        fi
+    fi
+fi
 if [ -z "${CPU_THREADS}" ] || [ "${CPU_THREADS}" = "0" ]; then
     CPU_THREADS="${NCPU}"
 fi

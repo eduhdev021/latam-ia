@@ -214,6 +214,10 @@ em 1.5 s. Não é o modelo, é thread.
 Por isso:
 
 - `CPU_THREADS=0` (padrão) usa o número de vCPU que o container enxerga — teto seguro.
+- O teto respeita o **limite de CPU do painel**, não só o que `nproc` diz. Se o servidor tem
+  `200% CPU / 2 cores` num node de 20 vCPU, o script detecta pelo cgroup
+  (`cpu.max` = `200000 100000`) e usa 2, não 20. Sem isso o `nproc` continua reportando as 20
+  cores do host e o Ollama cria 20 threads pra 2 cores de trabalho.
 - O start script nunca deixa passar disso, e avisa no console se você tentar.
 - Modelos < 3B costumam render melhor com 4-8. Teste no seu hardware.
 - **O limite só vale pro chat.** Cliente que chama a API direto precisa mandar
