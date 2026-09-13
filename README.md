@@ -104,10 +104,11 @@ proprio proxy com `UI_TOKEN` e se limpa no final):
 | Arquivo | O que cobre | Resultado |
 | --- | --- | --- |
 | `t-chat2.mjs` | markdown, highlight, tool calling, parâmetros, export, interrupção | **60/60** |
-| `t-features.mjs` | memória, fila, multi-modelo, fixar, `search`, PWA | **50/50** |
+| `t-features.mjs` | memória, fila, multi-modelo, fixar, `search`, PWA, gerenciar modelos | **67/67** |
 | `t-live.mjs` | ponta a ponta contra Ollama real (não mock) | **16/16** |
 | `t-live4.mjs` | as features novas contra Ollama real, com Wikipedia de verdade | **25/25** |
 | `t-live5.mjs` | API key de ponta a ponta contra proxy com `UI_TOKEN` | **8/8** |
+| `t-live6.mjs` | baixar e apagar modelo pela interface (pull/delete reais) | **11/11** |
 
 Dois bugs que a suíte ao vivo pegou e o jsdom sozinho não pegaria:
 
@@ -340,6 +341,22 @@ Contra o próprio servidor com `UI_TOKEN`, a mesma chave vale como Bearer
 (comparação em tempo constante) — testado de ponta a ponta: chave certa
 carrega modelos e responde, chave errada vira erro visível, sem chave a API
 recusa (`t-live5.mjs`, 8/8).
+
+## Gerenciar modelos (painel → Modelos)
+
+Baixe e apague modelos pela própria interface, sem abrir o console do servidor:
+
+- **Instalados** lista cada modelo com o tamanho em disco.
+- **Baixar** pede `nome:tag` (ex.: `llama3.2:1b`) e mostra a barra de progresso
+  em tempo real, lendo o stream do `/api/pull`.
+- O **✕** ao lado de cada modelo apaga — o primeiro clique arma ("apagar?") e o
+  segundo confirma, pra evitar exclusão por engano (sem `window.confirm`, que
+  bloqueia a interface).
+
+As chamadas passam por `apiFetch`, então respeitam a **API externa/key** do
+grupo Conexão e a autenticação do proxy. Testado de verdade no `t-live6.mjs`
+(11/11): baixa `all-minilm:latest`, confirma que chegou no servidor, e apaga
+pela interface.
 
 ## Tem painel oficial do Ollama?
 

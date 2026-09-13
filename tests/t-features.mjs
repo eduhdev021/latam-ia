@@ -269,6 +269,50 @@ const sysOf = (body) => (body.messages.find((m) => m.role === 'system') || {}).c
   ok(!(r2.opts.headers || {})['authorization'], 'sem chave: sem header', r2.opts.headers);
 }
 
+// ------------------------------------------------- gerenciar modelos (pull/delete)
+{
+  console.log('\n[gerenciar modelos] lista, baixar e apagar');
+  const b = boot({ models: [
+    { name: 'qwen3:0.6b', size: 522653767, capabilities: ['completion'] },
+    { name: 'llama3.2:1b', size: 1300000000, capabilities: ['completion'] },
+  ]});
+  await ready(b);
+
+  // lista renderiza com os dois modelos e botao de apagar
+  const rows = b.d.querySelectorAll('#mdl-list .mdl-row');
+  ok(rows.length === 2, 'lista mostra os 2 modelos', rows.length);
+  ok(b.d.querySelectorAll('#mdl-list .mdl-del').length === 2, 'cada modelo tem botao apagar');
+
+  // --- baixar: chama /api/pull com o nome digitado
+  b.state.reqs.length = 0;
+  b.d.getElementById('mdl-new').value = 'phi4-mini';
+  b.d.getElementById('mdl-pull').dispatchEvent(new b.w.Event('click', { bubbles: true }));
+  await until(() => b.state.reqs.some((r) => r.url.includes('/api/pull')));
+  const pullReq = b.state.reqs.find((r) => r.url.includes('/api/pull'));
+  ok(pullReq.opts.method === 'POST', 'pull e POST', pullReq.opts.method);
+  ok(JSON.parse(pullReq.opts.body).name === 'phi4-mini', 'pull manda o nome certo', pullReq.opts.body);
+  ok(JSON.parse(pullReq.opts.body).stream === true, 'pull pede stream (progresso)');
+  // barra de progresso avancou durante o stream
+  await until(() => b.d.getElementById('mdl-msg').textContent.includes('success')
+                   || b.d.getElementById('mdl-msg').textContent.includes('concluido'), 4000);
+  ok(b.d.getElementById('mdl-bar').style.width === '100%', 'barra chega a 100%', b.d.getElementById('mdl-bar').style.width);
+  ok(b.d.getElementById('mdl-pull').textContent === 'Baixar', 'botao volta a "Baixar" apos concluir', b.d.getElementById('mdl-pull').textContent);
+
+  // --- apagar: primeiro clique arma, segundo confirma e chama DELETE
+  b.state.reqs.length = 0;
+  const del = b.d.querySelector('#mdl-list .mdl-del');
+  const name = del.getAttribute('data-name');
+  del.dispatchEvent(new b.w.Event('click', { bubbles: true }));
+  ok(b.state.reqs.length === 0, '1o clique so arma, nao apaga ainda', b.state.reqs.length);
+  // 2o clique confirma
+  const del2 = b.d.querySelector('#mdl-list .mdl-del');
+  del2.dispatchEvent(new b.w.Event('click', { bubbles: true }));
+  await until(() => b.state.reqs.some((r) => r.url.includes('/api/delete')));
+  const delReq = b.state.reqs.find((r) => r.url.includes('/api/delete'));
+  ok(delReq.opts.method === 'DELETE', 'delete e DELETE', delReq.opts.method);
+  ok(JSON.parse(delReq.opts.body).name === name, 'delete manda o nome certo', delReq.opts.body);
+}
+
 console.log('\n================================');
 console.log(`  ${pass} passaram, ${fail} falharam`);
 console.log('================================');

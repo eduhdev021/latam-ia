@@ -524,6 +524,17 @@
       <textarea id="p-schema" placeholder='{"type":"object","properties":{...}}'></textarea>
       <div class="hint">JSON Schema. O modelo e obrigado a seguir.</div></div>
 
+    <div class="grp-t">Modelos</div>
+    <div class="fld"><label><b>Instalados</b></label>
+      <div class="hint">Baixe ou apague sem usar o console do servidor. O download vai para o disco do container.</div>
+      <div id="mdl-list"></div>
+      <div style="display:flex;gap:6px;margin-top:6px"><input type="text" id="mdl-new" placeholder="ex.: llama3.2:1b" style="flex:1">
+      <button type="button" id="mdl-pull" style="flex:0 0 auto">Baixar</button></div>
+      <div id="mdl-prog" style="display:none;margin-top:6px">
+        <div style="height:6px;background:var(--line);border-radius:3px;overflow:hidden"><div id="mdl-bar" style="height:100%;width:0;background:var(--accent);transition:width .2s"></div></div>
+        <div class="hint" id="mdl-msg" style="margin-top:4px"></div>
+      </div></div>
+
     <div class="grp-t">Conexao</div>
     <div class="fld"><label><b>API externa</b> <span style="color:var(--dim)">- opcional</span></label>
       <input type="text" id="c-base" placeholder="vazio = este servidor">
@@ -2029,6 +2040,7 @@
       subEl.textContent = ' · ' + models.length + ' modelo' + (models.length > 1 ? 's' : '');
       paintMulti(models.map(function (m) { return m.name; }));
       setReady();
+      renderModelList();
       status('');
       return probeModel(modelSel.value);
     }).catch(function (e) {
@@ -2490,6 +2502,123 @@
     window.addEventListener('load', function () {
       navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
     });
+  }
+
+  /* ============================================================ gerenciar modelos */
+  // Baixar/apagar modelos pela interface. Usa a mesma API do console
+  // (POST /api/pull, DELETE /api/delete) passando por apiFetch, entao respeita
+  // API externa/key do grupo Conexao e a autenticacao do proxy.
+  function renderModelList() {
+    var box = $('mdl-list');
+    if (!box) return;
+    var names = Object.keys(modelMeta);
+    if (!names.length) { box.innerHTML = '<div class="hint">nenhum modelo baixado</div>'; return; }
+    box.innerHTML = names.map(function (n) {
+      var sz = modelMeta[n] && modelMeta[n].size ? fmtBytes(modelMeta[n].size) : '';
+      return '<div class="mdl-row" data-name="' + esc(n) + '" style="display:flex;align-items:center;gap:6px;margin:3px 0">' +
+        '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(n) +
+        (sz ? ' <span style="color:var(--dim)">' + sz + '</span>' : '') + '</span>' +
+        '<button type="button" class="mdl-del" data-name="' + esc(n) + '" title="apagar" ' +
+        'style="flex:0 0 auto;background:none;border:0;color:var(--danger,#e55);cursor:pointer;font-size:15px">&#10005;</button>' +
+      '</div>';
+    }).join('');
+  }
+
+  var pullCtrl = null;
+  function pullModel() {
+    var input = $('mdl-new');
+    var name = (input.value || '').trim();
+    if (!name) { toast('digite o nome do modelo'); return; }
+    if (pullCtrl) { pullCtrl.abort(); pullCtrl = null; setPullBusy(false); return; }
+    var prog = $('mdl-prog'), bar = $('mdl-bar'), msg = $('mdl-msg');
+    prog.style.display = '';
+    bar.style.width = '0%';
+    msg.textContent = 'iniciando ' + name + '...';
+    setPullBusy(true);
+    pullCtrl = new AbortController();
+    apiFetch('/api/pull', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: name, stream: true }),
+      signal: pullCtrl.signal,
+    }).then(function (r) {
+      if (!r.ok) return r.text().then(function (t) { throw new Error('HTTP ' + r.status + ' ' + t.slice(0, 120)); });
+      return r.body.getReader();
+    }).then(function (reader) {
+      var dec = new TextDecoder(), buf = '';
+      var pump = function () {
+        return reader.read().then(function (res) {
+          if (res.done) return;
+          buf += dec.decode(res.value, { stream: true });
+          var lines = buf.split('\n');
+          buf = lines.pop();
+          for (var i = 0; i < lines.length; i++) {
+            if (!lines[i].trim()) continue;
+            var ev;
+            try { ev = JSON.parse(lines[i]); } catch (e) { continue; }
+            if (ev.error) throw new Error(ev.error);
+            if (ev.total) bar.style.width = Math.round(100 * (ev.completed || 0) / ev.total) + '%';
+            msg.textContent = ev.status || msg.textContent;
+          }
+          return pump();
+        });
+      };
+      return pump();
+    }).then(function () {
+      msg.textContent = 'concluido: ' + name;
+      bar.style.width = '100%';
+      input.value = '';
+      toast('modelo ' + name + ' pronto');
+      return loadModels().then(renderModelList);
+    }).catch(function (e) {
+      if (e.name !== 'AbortError') { msg.textContent = 'erro: ' + e.message; toast('falha ao baixar'); }
+    }).then(function () {
+      pullCtrl = null; setPullBusy(false);
+    });
+  }
+  function setPullBusy(on) {
+    var b = $('mdl-pull');
+    if (!b) return;
+    b.textContent = on ? 'Cancelar' : 'Baixar';
+    b.classList.toggle('busy', !!on);
+  }
+
+  var delArmed = {};   // nome -> true depois do 1o clique (confirma inline, sem confirm())
+  function armDelete(name, btn) {
+    if (!delArmed[name]) {
+      delArmed[name] = true;
+      btn.textContent = 'apagar?';
+      btn.style.fontSize = '12px';
+      setTimeout(function () {
+        if (delArmed[name]) { delArmed[name] = false; btn.textContent = '\u2715'; btn.style.fontSize = '15px'; }
+      }, 3000);
+      return;
+    }
+    delArmed[name] = false;
+    btn.disabled = true;
+    apiFetch('/api/delete', {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: name }),
+    }).then(function (r) {
+      if (!r.ok) return r.text().then(function (t) { throw new Error('HTTP ' + r.status + ' ' + t.slice(0, 120)); });
+      delete modelMeta[name];
+      toast(name + ' apagado');
+      loadModels().then(renderModelList);
+    }).catch(function (e) {
+      btn.disabled = false;
+      toast('falha ao apagar: ' + e.message);
+    });
+  }
+
+  var mdlBox = $('mdl-list');
+  if (mdlBox) {
+    mdlBox.addEventListener('click', function (ev) {
+      var b = ev.target.closest('.mdl-del');
+      if (b) armDelete(b.getAttribute('data-name'), b);
+    });
+    $('mdl-pull').addEventListener('click', pullModel);
+    $('mdl-new').addEventListener('keydown', function (e) { if (e.key === 'Enter') pullModel(); });
   }
 
   if (window.innerWidth <= 860) sideEl.classList.add('hidden');

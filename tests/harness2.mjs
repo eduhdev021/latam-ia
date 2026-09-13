@@ -50,6 +50,21 @@ export function boot(overrides = {}) {
           };
         }
         if (url.startsWith('/api/tags')) return { ok: true, json: async () => ({ models: state.models }) };
+        if (url.startsWith('/api/pull')) {
+          state.calls.push({ url, body });
+          // stream NDJSON de progresso, como o Ollama devolve
+          return streamResponse([
+            JSON.stringify({ status: 'pulling manifest' }),
+            JSON.stringify({ status: 'downloading', completed: 500, total: 1000 }),
+            JSON.stringify({ status: 'success' }),
+          ], body, 0);
+        }
+        if (url.startsWith('/api/delete')) {
+          state.calls.push({ url, body });
+          // imita o efeito real: some da lista do /api/tags seguinte
+          state.models = state.models.filter((m) => m.name !== (body && body.name));
+          return { ok: true, json: async () => ({}) };
+        }
         if (url.startsWith('/api/show')) {
           state.calls.push({ url, body });
           return state.show
