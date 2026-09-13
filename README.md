@@ -1,516 +1,200 @@
 # Egg Ollama (Pterodactyl / Pelican)
 
-Egg PTDL_v2 para rodar um servidor [Ollama](https://ollama.com) dentro de um server do Pterodactyl,
-com o painel de chat **LATAM IA** incluso na mesma porta. Abra `http://IP:PORTA/` no navegador e
-converse; `/api/*` e `/v1/*` continuam disponíveis na mesma URL (o `/v1` é compatível com OpenAI).
+Egg para rodar **Ollama** (LLM local, inferência em CPU) com o **Open WebUI** como
+interface web — tudo numa porta só, a allocation do server.
 
-Inferencia em **CPU** — o Pterodactyl não repassa GPU pro container, então as libs CUDA/ROCm/Vulkan/MLX
-são removidas na instalação.
+```
+ENABLE_OPENWEBUI=true  (padrão)
+
+  navegador ──> http://SEU_IP:SERVER_PORT/  ──>  Open WebUI  ──>  Ollama (127.0.0.1:11434)
+```
+
+O Open WebUI é o processo que segura a allocation. O Ollama escuta **só em
+localhost**, então não precisa de allocation extra nem de expor a API crua na
+internet. A API compatível com OpenAI é o `/api/v1` do próprio Open WebUI.
+
+Com `ENABLE_OPENWEBUI=false` o server vira API pura: o Ollama assume a
+`SERVER_PORT` e o `/api/*` + `/v1/*` ficam abertos na allocation.
 
 ## Arquivos
 
 | arquivo | o que é |
-|---|---|
-| `egg-ollama.json` | a egg — é só importar no painel |
-| `scripts/ollama-install.sh` | script de instalação embutido na egg (fonte legível) |
-| `scripts/ollama-start.sh` | startup que a instalação gera em `/home/container/ollama-start.sh` |
-| `scripts/ui-proxy.js` | sidecar Node: serve o chat, o PWA e a rota `/search`, e faz proxy da API |
-| `scripts/ui-chat.html` | o chat LATAM IA (arquivo único, sem CDN) |
-| `src/` | **fonte de verdade** dos três arquivos acima |
-| `assets/` | logo com fundo transparente + derivações 192/512 pro PWA |
-| `tests/` | suíte jsdom + testes de ponta a ponta contra Ollama real |
-| `build_egg.py` | regenera `egg-ollama.json` copiando de `src/` para `scripts/` |
+| --- | --- |
+| `egg-ollama.json` | a egg (PTDL_v2). É o que você importa no painel. |
+| `build_egg.py` | gera `egg-ollama.json` embutindo `scripts/ollama-install.sh`. |
+| `scripts/ollama-install.sh` | instalador: baixa o Ollama, remove libs de GPU, instala o Open WebUI. |
+| `src/ollama-start.sh` | start script (editável pelo File Manager do painel). |
+| `scripts/ollama-start.sh` | cópia gerada pelo build — é a que o Git entrega ao servidor. |
+| `tests/t-egg.mjs` | valida a egg, as variáveis, a sincronia e resíduos de código morto. |
+| `tests/t-start.mjs` | **executa** o start script contra binários-stub (7 cenários). |
+| `tests/t-api-live.mjs` | valida a API do Ollama; se auto-pula quando não há Ollama no ar. |
 
-## O chat vem deste repositório
-
-Durante a instalação o script faz `git clone --depth 1` de `UI_REPO` (padrão
-`https://github.com/eduhdev021/latam-ia.git`) na ref `UI_REF` (padrão `main`) e copia
-`scripts/ui-chat.html` → `/home/container/ui/chat.html` e `scripts/ui-proxy.js` →
-`/home/container/ui/proxy.js`. O commit usado fica registrado em `ui/.git-ref`.
-
-**Pra atualizar o chat:** edite os arquivos aqui, dê push, e rode *Reinstall Server* no painel.
-Não precisa mexer na egg.
-
-Se o clone falhar (repo fora do ar, branch errada, sem `git` no container), o instalador avisa no
-console e usa a cópia embutida na egg — o server sobe do mesmo jeito. Testado dos dois jeitos.
-
-O repo é **público de propósito**: um repo privado exigiria credencial dentro do server, e
-qualquer subadmin com acesso a eggs conseguiria ler. Se precisar fechar, use uma deploy key
-read-only por node, nunca um PAT.
-
-## Como funciona a porta única
-
-O Ollama não tem interface web — `GET /` devolve só o texto `"Ollama is running"`
-(`server/routes.go:1878`). Então a egg coloca um sidecar Node na frente:
-
-```
-navegador ──► allocation SERVER_PORT ──► ui/proxy.js
-                                          ├─ GET /        → ui/chat.html
-                                          └─ todo o resto → 127.0.0.1:11434 (ollama serve)
-```
-
-O Ollama passa a escutar só em `127.0.0.1` numa porta interna, que não precisa de allocation no
-painel. O proxy usa `pipe()`, então o streaming SSE do `stream: true` passa intacto. A página chama
-`/api/chat` com URL relativa — mesma origem, zero problema de CORS.
-
-Com `ENABLE_UI=false` o sidecar não sobe e o Ollama volta a escutar direto em `0.0.0.0:${SERVER_PORT}`.
-
-### Sobre portas
-
-**A porta pública é sempre a do Wings** (`SERVER_PORT`, a allocation primária do server —
-`server/server.go:158`). Não existe porta fixa exposta. Testado trocando a allocation:
-
-| `SERVER_PORT` | proxy escuta | ollama escuta | `GET /` |
-|---|---|---|---|
-| 25565 | `0.0.0.0:25565` | `127.0.0.1:11434` | 200 `text/html` |
-| 42069 | `0.0.0.0:42069` | `127.0.0.1:11434` | 200 `text/html` |
-| 11434 | `0.0.0.0:11434` | `127.0.0.1:11435` (desviou) | 200 `text/html` |
-| 43000 com `ENABLE_UI=false` | — | `0.0.0.0:43000` | 200 `text/plain` ("Ollama is running") |
-
-O único número fixo do projeto é o `11434` **interno**, em loopback: não é allocation, não é
-publicado pelo Docker e ninguém de fora alcança. Se a allocation do server for justamente 11434, o
-script desvia o interno pra 11435 (terceira linha da tabela).
-
-Se o server tiver uma **allocation secundária** em 11434, aí sim dá confusão — o Docker publicaria
-essa porta direto pro Ollama, contornando o sidecar. Evitem alocar 11434 e 11435.
-
-## O que foi testado de verdade
-
-Testado no sandbox (Debian 13 / glibc 2.41 — mesma base da `yolks:nodejs_24`), com Ollama **v0.34.0**:
-
-- instalação completa: download de 1.4 GB → extração → strip de GPU (**2.2 GB → 69 MB**) → smoke test respondeu `{"version":"0.34.0"}`
-- `shellcheck` limpo (nível warning) no install e no start; `node --check` limpo no proxy
-- boot pelo **entrypoint real do yolks nodejs** com `STARTUP=bash /home/container/ollama-start.sh`
-- `[ui] chat em http://0.0.0.0:25565/ -> API em 127.0.0.1:11434`
-- `GET /` pela porta pública → **200, `text/html; charset=utf-8`, 9450 bytes**
-- `GET /api/tags` atravessando o proxy → **200** com o JSON dos modelos
-- `POST /api/chat` com `stream:true` atravessando o proxy → **200, 5 chunks NDJSON**, `done_reason: stop`
-- `POST /api/chat` sem stream → resposta completa, 18.5 tok/s em 2 vCPUs
-- auto-pull baixou `qwen3:0.6b` sozinho; `Listening on 127.0.0.1:11434` continuou chegando no console
-  (o marcador de "done" da egg não quebrou com o sidecar na frente)
-- `SIGINT` no grupo de processos derrubou proxy e Ollama em 2 s (`[ui] SIGINT recebido, encerrando.`)
-
-### Chat (testado com jsdom + Ollama real)
-
-Testes em `tests/` rodam a página de verdade no jsdom, com `fetch` mockado devolvendo
-stream NDJSON e relógio dentro da página (`performance.now`) medindo cada paint.
-
-Suíte atual (roda com `node tests/t-*.mjs`, precisa de `npm i jsdom`). As duas
-suítes de mock rodam sozinhas em CI (`.github/workflows/tests.yml`) — os testes
-acham o chat por caminho relativo ao repo, sem depender de sandbox. As ao vivo
-(`t-live*`) precisam de um Ollama em `127.0.0.1:11434` (o `t-live5` sobe o
-proprio proxy com `UI_TOKEN` e se limpa no final):
-
-| Arquivo | O que cobre | Resultado |
-| --- | --- | --- |
-| `t-chat2.mjs` | markdown, highlight, tool calling, parâmetros, export, interrupção | **60/60** |
-| `t-features.mjs` | memória, fila, multi-modelo, fixar, `search`, PWA, modelos, editar/apagar, botão OWUI | **79/79** |
-| `t-live.mjs` | ponta a ponta contra Ollama real (não mock) | **16/16** |
-| `t-live4.mjs` | as features novas contra Ollama real, com Wikipedia de verdade | **25/25** |
-| `t-live5.mjs` | API key de ponta a ponta contra proxy com `UI_TOKEN` | **8/8** |
-| `t-live6.mjs` | baixar e apagar modelo pela interface (pull/delete reais) | **11/11** |
-| `t-live7.mjs` | os dois painéis numa porta só (interruptor por cookie) | **11/11** |
-
-Dois bugs que a suíte ao vivo pegou e o jsdom sozinho não pegaria:
-
-- **Trocar de modelo matava o tool calling.** O modelo inicial não suportava
-  ferramentas, o checkbox `ferramentas` era desligado, e ao trocar para um
-  modelo compatível ele **continuava desligado** — o usuário ficava sem tool
-  calling sem ver porquê. Agora a preferência é guardada e restaurada.
-- **`web_search` nunca era chamado** pelo `qwen3:0.6b` (0/15). Renomear para
-  `search` resolveu (5/5) — detalhe na seção *O que veio do Open WebUI*.
-
-- **stream-test** — o texto aparece na tela **antes** do stream terminar, chunk a chunk
-  (`t=60ms "Ola!"` → `t=90ms "Ola! Tudo"` → ...), e o texto final é igual ao stream. 5/5 asserções.
-- **paint-cost** — 400 chunks com 8 ms de intervalo: **199 paints medidos, 0.561 ms de custo médio,
-  pior paint 4.6 ms**, e o texto cresceu em 57 de 58 amostras.
-- **render-cost** — isolando o renderizador com 4000 chunks: re-renderizar o markdown inteiro por
-  chunk custa **1.384 ms/paint** (pior 7.6 ms); o renderizador incremental do LATAM IA, que cacheia
-  os blocos já fechados e re-renderiza só o último, custa **0.094 ms/paint** (pior 0.78 ms) — 14,7x.
-- **contra o Ollama real** (não mock): 94 chunks em 7.36 s, um a cada ~55 ms, primeiro token em
-  2.11 s. `<title>LATAM IA</title>` servido com 200.
-
-Um bug que esses testes pegaram: o `<select>` tinha um `<option value="">carregando modelos...</option>`
-de placeholder, então `modelSel.value` era vazio durante o load — enviar nesse estado não fazia nada
-e a tela ficava muda, parecendo travada. Agora o composer começa desabilitado e libera sozinho
-quando a lista chega.
+`scripts/` é o que o instalador clona deste repositório. Se você editar
+`src/ollama-start.sh`, rode `python3 build_egg.py` (sincroniza a cópia e a egg) e
+faça commit — a CI reclama se os dois divergirem.
 
 ## Como instalar
 
-1. Painel → **Admin → Nests → Create Egg** (ou importar o JSON).
-2. Cole o conteúdo de `egg-ollama.json` no importador de egg.
-3. Crie o server apontando pra essa egg e **dê disco e RAM suficientes** (veja abaixo).
-4. Espere a instalação terminar — ela baixa ~1.4 GB do GitHub.
+1. Painel → **Admin → Nests → Import Egg** → suba `egg-ollama.json`.
+2. Crie o server com essa egg. Imagem: `ghcr.io/parkervcp/yolks:nodejs_24`.
+3. **Allocation**: uma porta só. É nela que o Open WebUI vai atender.
+4. **Startup**: confira `MODEL` (ex.: `qwen3:0.6b`) e deixe `ENABLE_OPENWEBUI=true`.
+5. Instale. O download do Ollama tem ~1,4 GB e o Open WebUI mais ~3 GB de disco.
+6. **Start** → abra `http://SEU_IP:PORTA/` → o primeiro acesso cria a conta admin.
+
+> O Node da imagem yolks não é usado por nada: o Open WebUI roda em Python 3.11
+> standalone (via `uv`, em `owui-venv/`) e o Ollama é um binário Go. A imagem
+> nodejs_24 entra só porque traz `curl`, `git` e um userland Debian recente.
 
 ## Requisitos do server
 
-| recurso | mínimo | recomendado |
-|---|---|---|
-| RAM | 2 GB (modelo 0.6B) | 8 GB (modelo 7-8B) |
-| Disco | 5 GB livres no pico da instalação | 20 GB+ com modelo 7-8B |
-| CPU | 2 vCPU | 4+ vCPU |
-| CPU flags | AVX2 (sem AVX cai no backend `cpu` e fica muito lento) | AVX-512 |
+**Disco é a primeira parede, RAM é a segunda.**
 
-O pico de disco durante a instalação é ~4.5 GB (tarball de 1.4 GB + 2.2 GB extraído); depois de
-remover as libs de GPU fica em ~70 MB. O script avisa no log se o disco for insuficiente.
+| item | quanto |
+| --- | --- |
+| binário do Ollama | ~70 MB depois de remover CUDA/ROCm/Vulkan (~2,2 GB sem remover) |
+| Open WebUI (`owui-venv/`) | ~3 GB |
+| pico da instalação | ~4,5 GB livres |
+| modelo | `qwen3:0.6b` = 522 MB · `llama3.1:8b` = 4,9 GB |
+| RAM do Open WebUI | ~800 MB–1 GB, quase fixo |
+| RAM por modelo | ~4 GB para modelos pequenos |
 
-## Variáveis
+CPU precisa ter **AVX2**. Sem AVX o Ollama cai no backend `cpu` básico e fica
+muito lento (o start script avisa no console).
 
-| env | padrão | o que faz |
-|---|---|---|
-| `ENABLE_UI` | `true` | serve o chat em `http://IP:PORTA/`; `false` = só API na allocation |
-| `ENABLE_OPENWEBUI` | `false` | `true` instala (Reinstall) e roda o Open WebUI junto (~2,7 GB disco, ~920 MB RAM) |
-| `OPENWEBUI_PORT` | `3000` | porta do Open WebUI - precisa de allocation propria no painel |
-| `CPU_THREADS` | `0` | threads de inferência; `0` = número de vCPU do container |
-| `MODEL` | `qwen3:0.6b` | modelo baixado no start; vazio = não baixa nada |
-| `AUTO_PULL` | `true` | roda `ollama pull` assim que o servidor sobe |
-| `KEEP_ALIVE` | `5m` | quanto tempo o modelo fica na RAM (`-1` = nunca descarrega) |
-| `NUM_PARALLEL` | `1` | `OLLAMA_NUM_PARALLEL` — a RAM escala com esse valor |
-| `MAX_LOADED_MODELS` | `1` | `OLLAMA_MAX_LOADED_MODELS` |
-| `CONTEXT_LENGTH` | `2048` | `OLLAMA_CONTEXT_LENGTH` (`0` = Ollama decide) |
-| `KV_CACHE_TYPE` | `f16` | `q8_0`/`q4_0` economizam RAM com perda leve de qualidade |
-| `ORIGINS` | `*` | `OLLAMA_ORIGINS` (CORS) |
-| `FLASH_ATTENTION` | `1` | `OLLAMA_FLASH_ATTENTION` |
-| `DEBUG` | `0` | `OLLAMA_DEBUG` (logs verbosos) |
-| `LLM_LIBRARY` | *(vazio)* | força `cpu`, `cpu_avx`, `cpu_avx2` |
-| `OLLAMA_VERSION` | `latest` | só admin — tag do GitHub usada na instalação |
-| `STRIP_GPU_LIBS` | `true` | só admin — apaga CUDA/ROCm/Vulkan/MLX |
+## Variáveis (aba Startup)
+
+17 variáveis. As que importam no dia a dia:
+
+| variável | padrão | o que faz |
+| --- | --- | --- |
+| `MODEL` | `qwen3:0.6b` | baixado automaticamente na instalação/start. |
+| `ENABLE_OPENWEBUI` | `true` | interface web na allocation + Ollama em localhost. `false` = API pura. |
+| `AUTO_PULL` | `true` | baixa `MODEL` ao subir. |
+| `CPU_THREADS` | `0` | `0` = usa as vCPU que o container enxerga (já é o teto seguro). |
+| `CONTEXT_LENGTH` | `2048` | contexto padrão. É o que mais come RAM: corte para 1024 se apertar. |
+| `KEEP_ALIVE` | `5m` | quanto tempo o modelo fica carregado. Menos = mais RAM livre. |
+| `NUM_PARALLEL` / `MAX_LOADED_MODELS` | `1` / `1` | suba só se sobrar RAM. |
+| `OLLAMA_VERSION` | `latest` | usada na instalação/reinstall. |
+| `UI_REPO` / `UI_REF` | este repo / `main` | de onde vem o start script. |
+
+O resto (`KV_CACHE_TYPE`, `ORIGINS`, `FLASH_ATTENTION`, `DEBUG`, `LLM_LIBRARY`,
+`STRIP_GPU_LIBS`) está documentado na própria egg.
 
 ## Usando a API
 
-O Ollama escuta em `0.0.0.0:${SERVER_PORT}` — use o IP e a porta da allocation do server.
+O Open WebUI expõe uma API compatível com OpenAI na **mesma porta** da interface.
+A criação de chave vem **ligada** (`ENABLE_API_KEYS=true`, exportado pelo start
+script — o Open WebUI traz isso desligado por padrão).
+
+Pegue a chave em **Settings → Account → API Keys** e:
 
 ```bash
-# chat
-curl http://IP:PORTA/api/chat -d '{
-  "model": "qwen3:0.6b",
-  "messages": [{"role": "user", "content": "oi"}],
-  "stream": false
-}'
-
-# endpoint compatível com OpenAI
-curl http://IP:PORTA/v1/chat/completions \
-  -H "Authorization: Bearer ollama" \
-  -d '{"model": "qwen3:0.6b", "messages": [{"role": "user", "content": "oi"}]}'
+curl http://SEU_IP:PORTA/api/v1/chat/completions \
+  -H "Authorization: Bearer sk-XXXX" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"qwen3:0.6b","messages":[{"role":"user","content":"oi"}]}'
 ```
 
-**Não existe shell no Pterodactyl**, então pra baixar modelos você tem dois caminhos:
+> **Pegadinha medida na prática:** o Open WebUI guarda esse flag no SQLite
+> (`config.auth.enable_api_keys`) e o valor do banco **vence** o da variável de
+> ambiente depois do primeiro boot — `Config.get()` em `models/config.py` só usa
+> o default do env quando a linha não existe. Ou seja: o `ENABLE_API_KEYS=true`
+> do start script vale para instalação nova; se o banco já existia com o flag
+> desligado, ligue em **Admin → Settings → Interface**. Sem isso a criação de
+> chave responde `403 API key creation is not allowed in the environment`.
 
-1. mudar `MODEL` + `AUTO_PULL=true` e reiniciar o server (o progresso aparece no console), ou
-2. chamar a API direto: `curl http://IP:PORTA/api/pull -d '{"model":"llama3.2:1b"}'`
-
-Os modelos ficam em `/home/container/models` e contam no limite de disco do server.
-
-## Detalhes técnicos que valem saber
-
-- **A imagem tem que ser yolks.** O Wings não sobrescreve o `ENTRYPOINT` do container de runtime —
-  ele só passa `STARTUP` como env var (`server/server.go:155`), e quem faz o eval é o
-  `entrypoint.sh` da imagem. Uma imagem que não seja yolks nem chegaria a rodar o comando.
-  `ghcr.io/parkervcp/yolks:nodejs_24` é `node:24-trixie-slim` (Debian 13, glibc 2.41), com
-  `tini -g --` + `/entrypoint.sh` e `STOPSIGNAL SIGINT` — verificado direto no config da imagem
-  via registry API. O `entrypoint.sh` do nodejs faz a mesma substituição `{{VAR}}` → `${VAR}`.
-- **`/tmp` do container de instalação é tmpfs de 100 MB** (Wings: `docker.tmpfs_size`,
-  `server/install.go:445`). Por isso o script baixa o tarball dentro de `/mnt/server/.install-tmp`
-  e apaga no final — baixar em `/tmp` estouraria sempre.
-- **Nada de OpenBLAS.** Checado no v0.34.0 com `readelf`/`strings`: nenhuma `.so` do build CPU
-  referencia OpenBLAS, e o `RUNPATH` delas é `$ORIGIN`. O `libopenblas0` da imagem oficial serve
-  pros backends de GPU/MLX.
-- **Permissões.** A instalação roda como root em `/mnt/server`; o Wings faz `chown` recursivo no
-  boot (`CheckPermissionsOnBoot`, padrão `true`), então os arquivos ficam acessíveis.
-- **Detecção de "pronto".** O match do Wings é `bytes.Contains` case-sensitive
-  (`remote/types.go:103`, aplicado em `server/listeners.go:169`), ou `regex:` pra regex. Por isso
-  a egg usa `"Listening on"` **e** `"regex:(?i)listening on"`.
-- **`strip_ansi: true`** porque o `ollama pull` imprime barra de progresso com códigos ANSI, que
-  poluem o console do painel.
-
-## Por que o chat vem do Git (e não de dentro da egg)
-
-O painel do Pterodactyl **corta o script de instalação da egg em ~64 KiB**.
-Medido no erro real:
-
-```
-/mnt/install/install.sh: line 1414: warning: here-document at line 457
-    delimited by end-of-file (wanted `CHATEOF')
-/mnt/install/install.sh: line 1415: syntax error: unexpected end of file
-```
-
-O chat tem 90 KB. Embutido na egg, o instalador ia a 117 KB e chegava truncado
-no container — cortado no meio do heredoc, daí o `wanted CHATEOF`.
-
-Por isso a egg só carrega **11 KB** de instalador, e tudo que o servidor precisa
-(`ui-chat.html`, `ui-proxy.js`, `ollama-start.sh`) vem do `git clone` na
-instalação. Consequência: **sem acesso ao Git a instalação falha de propósito**,
-com mensagem dizendo o repo e a branch que tentou. Não há fallback embutido —
-não cabe.
-
-Atualizar o chat = `git push` + *Reinstall Server*. Não precisa mexer na egg.
-
-## O que o chat tem
-
-Arquivo único (`scripts/ui-chat.html`, ~107 KB), sem build e sem dependência npm.
-Tudo roda no navegador; o `proxy.js` só serve a página, faz a busca na web e
-repassa o resto pra API.
-
-Várias das features abaixo foram implementadas a partir do que o
-[Open WebUI](https://github.com/open-webui/open-webui) faz — só as que rodam
-**sem backend**, porque aqui o chat é um arquivo estático servido por um proxy
-de ~17 KB. O que exige servidor (RBAC, LDAP/SSO, banco vetorial, canais) não
-entra e não é prometido.
-
-**Conversas** — múltiplas conversas com sidebar, busca, agrupamento por data
-(hoje / ontem / 7 dias / antigas), renomear (duplo clique), apagar com
-confirmação. Tudo em `localStorage`, sobrevive ao reload.
-
-**Markdown completo** — cabeçalhos, negrito/itálico/riscado, listas aninhadas,
-listas ordenadas, tabelas com alinhamento, blockquote, `hr`, links, imagens,
-código inline e blocos com **syntax highlight próprio** (JS/TS, Python, Go,
-shell, C/C++/Rust, SQL, HTML, CSS, YAML), label de linguagem e botão copiar.
-LaTeX via KaTeX (CDN, desligável no painel).
-
-**Tool calling** — o chat detecta `capabilities` via `/api/show` e só habilita
-ferramentas se o modelo suportar. Vem com duas que rodam no navegador:
-`get_current_time` (fuso IANA) e `calculator`. A chamada e o resultado aparecem
-na conversa como cartão. Verificado de ponta a ponta com `qwen3:0.6b`: o modelo
-pede a ferramenta, o chat executa, devolve como `role:tool`, e o modelo responde
-com o resultado.
-
-**Parâmetros** — temperature, top_p, top_k, num_predict, repeat/presence/
-frequency penalty, seed, num_ctx. Por modelo, persistidos. O painel **começa nos
-valores que o próprio Modelfile declara** (lidos de `/api/show`), não em chute.
-
-**System prompt**, formato de saída (livre / JSON forçado / JSON Schema),
-truncar histórico, flash attention.
-
-**Ações** — copiar, regenerar, editar a última mensagem sua, parar a geração
-(salva o trecho que já veio). Métricas no rodapé: modelo, tempo, tok/s, tokens.
-
-**Anexos de imagem** — colar (Ctrl+V), arrastar ou selecionar. Só habilita se o
-modelo tiver `vision` nas capabilities; senão avisa e não manda.
-
-**Exportar / importar** — JSON de todas as conversas, ou Markdown da conversa
-atual.
-
-**Tema** claro/escuro. **Atalhos**: `Ctrl+K` nova conversa, `Ctrl+/` painel de
-config, `Esc` fecha.
-
-**Autenticação** — veja a seção abaixo.
-
-## O que veio do Open WebUI
-
-| Feature | Como está aqui |
-| --- | --- |
-| **Memória persistente** | Painel → *Memória*. Fatos salvos em `localStorage` são injetados como mensagem de `system` em **todas** as conversas. Até 40 fatos, liga/desliga sem apagar. |
-| **Multi-modelo** | Checkbox *multi* na barra. A mesma pergunta vai em paralelo para até 4 modelos, cada resposta na sua bolha com o nome do modelo. Só a resposta do modelo principal entra no histórico — as outras são comparacão e não poluem o contexto. |
-| **Fila de mensagens** | Enviar durante uma resposta **não corta mais a geração**: a mensagem entra na fila (até 10), visível acima do composer, e sai quando a resposta atual terminar. Interromper de propósito continua parando tudo. |
-| **Web search** | Ferramenta `search` (Wikipedia, **sem chave de API**). A busca roda no `proxy.js`, não no navegador, porque provedor de busca normalmente não libera CORS. |
-| **PWA** | `manifest.webmanifest`, `sw.js` e `icon.svg` servidos pelo proxy. Dá pra instalar como app e o shell abre offline. Requisição de API **nunca** entra no cache. |
-| **Conversas fixadas** | Botão *Fixar* na sidebar: grupo "Fixadas" no topo, com estrela. |
-
-Duas coisas que medi antes de implementar:
-
-- **Multi-modelo é viável no navegador.** Duas `POST /api/chat` simultâneas ao
-  mesmo Ollama voltaram `200` em 1,65 s e 2,05 s — o servidor aceita concorrência.
-- **O nome da ferramenta importa.** Com o nome `web_search`, o `qwen3:0.6b`
-  *pensava* em chamar a ferramenta e não emitia o tool call: **0 acertos em 15
-  tentativas**, com a resposta saindo vazia. Renomeei para `search` e foram
-  **5 de 5**. O sublinhado parece confundir o template de ferramentas do modelo
-  pequeno. Se você trocar o nome, meça de novo.
-
-**Não implementado** (exige backend de verdade): RAG com banco vetorial, notas,
-canais, voz (STT/TTS), analytics/ELO, RBAC, LDAP/SSO/SCIM, plugins e MCP.
-
-## Logo, ícone e PWA
-
-O logo (`assets/logo.png`) teve o fundo preto removido por corte de cor medido
-no próprio arquivo (o halo escuro era RGB quase preto com alpha alto; `rembg`
-tratou o halo como parte do logo e falhou). A instalação copia
-`assets/logo-192.png` e `logo-512.png` do Git para `ui/`, e o proxy serve em
-`/logo-192.png`, `/logo-512.png` e `/logo.png` com cache de 7 dias.
-
-- **Favicon e header**: o chat testa `/logo-192.png`; se existir, troca o "L"
-  pelo logo e vira o favicon. Instalação antiga sem o arquivo continua no "L".
-- **PWA**: o manifest lista os PNGs 192/512 (any + maskable).
-- **Auth**: esses arquivos são públicos mesmo com `UI_TOKEN` ligado — é só o
-  casco do app, sem dado. A API e a página continuam atrás do login.
-
-## API externa e chave (painel → Conexao)
-
-Dois campos novos: **API externa** (URL base de outra instância Ollama ou
-compatível) e **API key** (enviada como `Authorization: Bearer`). Sem
-configurar, o chat fala com o próprio servidor. A chave fica só no
-`localStorage` do navegador, e a API de destino precisa aceitar CORS.
-
-Contra o próprio servidor com `UI_TOKEN`, a mesma chave vale como Bearer
-(comparação em tempo constante) — testado de ponta a ponta: chave certa
-carrega modelos e responde, chave errada vira erro visível, sem chave a API
-recusa (`t-live5.mjs`, 8/8).
-
-## Editar e apagar mensagens
-
-Cada mensagem tem ações próprias, como no Open WebUI:
-
-- **Suas mensagens** mostram *editar* e *apagar* ao passar o mouse.
-- **editar** devolve o texto à caixa de entrada e recorta o histórico até ali —
-  é só ajustar e mandar de novo.
-- **apagar** some com a mensagem: apagar uma resposta remove só ela; apagar uma
-  pergunta remove a troca inteira (pergunta + resposta). O botão pede
-  confirmação em dois cliques ("apagar?"), sem `window.confirm`.
-- Nas respostas, *editar* reabre a pergunta que gerou **aquela** resposta.
-
-O índice da mensagem é resolvido pelo `data-mi` gravado na bolha — contar bolhas
-não funciona porque resultados de ferramenta ficam no histórico sem desenhar
-bolha própria. Coberto pelo `t-features.mjs` (76/76).
-
-## Gerenciar modelos (painel → Modelos)
-
-Baixe e apague modelos pela própria interface, sem abrir o console do servidor:
-
-- **Instalados** lista cada modelo com o tamanho em disco.
-- **Baixar** pede `nome:tag` (ex.: `llama3.2:1b`) e mostra a barra de progresso
-  em tempo real, lendo o stream do `/api/pull`.
-- O **✕** ao lado de cada modelo apaga — o primeiro clique arma ("apagar?") e o
-  segundo confirma, pra evitar exclusão por engano (sem `window.confirm`, que
-  bloqueia a interface).
-
-As chamadas passam por `apiFetch`, então respeitam a **API externa/key** do
-grupo Conexão e a autenticação do proxy. Testado de verdade no `t-live6.mjs`
-(11/11): baixa `all-minilm:latest`, confirma que chegou no servidor, e apaga
-pela interface.
-
-## Open WebUI junto (opcional)
-
-Da pra rodar o **Open WebUI** (contas de usuario, RAG de documentos, RBAC) ao
-mesmo tempo que o chat LATAM IA, no mesmo server e usando o mesmo Ollama:
-
-1. Startup → `ENABLE_OPENWEBUI=true` (e `OPENWEBUI_PORT`, padrao 3000);
-2. Aloque a porta no painel: **Admin → seu server → Allocation → Allocate Port**
-   (o chat continua na `SERVER_PORT`; o Open WebUI precisa da allocation propria);
-3. **Reinstall Server** — o instalador baixa Python 3.11 (via uv, standalone),
-   torch **CPU-only** e o open-webui. O torch padrao do PyPI traria ~5 GB de
-   libs CUDA inuteis em server sem GPU; o caminho CPU-only deixa tudo em
-   **~2,7 GB de disco** (medido);
-4. Start → Open WebUI em `http://IP:3000` (primeiro acesso cria a conta admin),
-   chat LATAM IA segue em `http://IP:PORTA/`.
-
-**Quer SÓ o Open WebUI (sem o chat LATAM IA)?** Deixe `ENABLE_UI=false` com
-`ENABLE_OPENWEBUI=true`: o Open WebUI assume a allocation publica
-(`http://IP:SERVER_PORT/`) e o Ollama fica so em localhost. Foi testado assim:
-porta publica servindo o Open WebUI (200/health), conta admin criada pela API e
-os modelos do Ollama visiveis por dentro dele.
-
-**So tem uma porta alocada (com os dois)? Da na mesma.** O proxy tem um interruptor: o painel
-do chat (grupo Conexao) mostra **Abrir Open WebUI** — a mesma porta publica
-passa a servir o Open WebUI (cookie `latam_panel`), com um botao "← LATAM IA"
-fixo na tela pra voltar. WebSocket (socket.io) segue o mesmo cookie, e o
-Open WebUI usa o login proprio dele (nao passa pelo `UI_TOKEN` do chat). Se
-voce tiver a segunda allocation, os dois jeitos funcionam ao mesmo tempo.
-
-Conta de custo (medido na pratica): ~2,7 GB de disco + **~920 MB de RAM** com o
-painel no ar — e RAM que sai da fatia dos modelos. Por isso vem desligado por
-padrao. Os dados (SQLite) ficam em `open-webui/` e sobrevivem a restart. Para
-reinstalar o Open WebUI, apague `owui-venv/` e rode Reinstall.
-
-Verificado de ponta a ponta: instalador com `ENABLE_OPENWEBUI=true` (uv +
-venv 3.11 + torch cpu + open-webui 0.11.3), start script subindo os tres
-servicos juntos, LATAM IA 200 + Open WebUI 200/health OK + Ollama 0.34.0.
-
-## Tem painel oficial do Ollama?
-
-**Não.** Testado em setembro/2026:
-
-- ao vivo: `GET /` na API v0.34.0 devolve só `Ollama is running` em
-  `text/plain`; não há `/index.html` nem assets;
-- `github.com/ollama/webui`, `ollama/ui` e `ollama/web` → **404**;
-- guias atuais ([1](https://markaicode.com/integrate/ollama-with-open-webui/),
-  [2](https://localaimaster.com/blog/open-webui-setup-guide)) seguem tratando o
-  **Open WebUI** (terceiros) como a interface padrão.
-
-O Open WebUI em si não cabe no seu server: é Python/FastAPI + SvelteKit, imagem
-Docker de ~1,5 GB — e server Pterodactyl não roda Docker. Alternativas leves
-existem (ex.: `ollama-gui`, que exige build Vite/React), mas nenhuma é oficial.
-O LATAM IA continua sendo a interface: arquivo único servido pelo proxy, sem
-build.
-
-**Autenticação** — veja a seção acima.
-
-## Autenticação
-
-A API do Ollama **não tem autenticação nenhuma**. Quem expõe a allocation na
-internet deixa o modelo aberto pra qualquer um. Por isso:
-
-| `UI_TOKEN` | comportamento |
-|---|---|
-| vazio (padrão) | chat e API abertos. O console avisa no boot. |
-| definido | `/login` exige o token; a API também passa a exigir a sessão. |
-
-Como funciona: o proxy compara o token em **tempo constante**
-(`crypto.timingSafeEqual`, pra não vazar byte a byte), emite um cookie de sessão
-aleatório de 24 bytes com 30 dias de validade, e grava as sessões em
-`ui/.session.json` (modo 0600) pra sobreviver ao restart. `Authorization: Bearer`
-também vale, então script continua funcionando:
-
-```bash
-# pega a sessao
-curl -c c.txt -X POST -d 'token=SEU_TOKEN' https://SEU_SERVIDOR/login
-# usa
-curl -b c.txt https://SEU_SERVIDOR/api/tags
-```
-
-Trocar o `UI_TOKEN` invalida as sessões no próximo restart.
-
-**Limitação honesta:** isso é um portão, não é segurança de produção. O token vai
-em texto puro se não houver TLS na frente, não tem rate limit nem lockout, e é
-compartilhado (não há usuários separados). Pra expor na internet de verdade,
-ponha um reverse proxy com TLS e basic auth na frente.
+Com `ENABLE_OPENWEBUI=false` a API é a do próprio Ollama na allocation:
+`/api/tags`, `/api/generate`, `/api/chat` e `/v1/*` (compatível com OpenAI), sem
+autenticação — nesse caso proteja com firewall ou não exponha a allocation.
 
 ## Threads de inferência (importante)
 
-Modelo pequeno em CPU com thread demais fica **mais lento**, não mais rápido — o overhead de
-sincronização entre threads come o ganho. Medido neste projeto, num container de 2 vCPU com
-`qwen3:0.6b` (550 MB):
+Em modelo pequeno (<3B) usar **todas** as vCPU **atrasa**: o overhead de
+sincronização come o ganho. Medido com 2 vCPU:
 
-| `num_thread` | 1º byte | velocidade | `prompt_eval` |
-|---|---|---|---|
-| 1 | 1.38 s | 27.8 tok/s | 0.22 s |
-| 2 | 1.27 s | 45.2 tok/s | 0.12 s |
-| **4** | **33.9 s** | **0.2 tok/s** | **6.74 s** |
+| threads | tok/s |
+| --- | --- |
+| 1 | 27,8 |
+| 2 | 45,2 |
+| 4 | **0,2** (thrashing) |
 
-Quatro threads em dois núcleos derrubou a velocidade 200x. É oversubscription pura.
+O teto é calculado pelo start script a partir do cgroup, e não do `nproc`.
+Motivo: o Pterodactyl pode limitar CPU por **quota CFS** (`cpu.max`, o "200% CPU
+/ 2 cores" do painel) em vez de `cpuset` — nesse caso `nproc` continua
+reportando todas as cores do host, e o runtime do Go cria 20 threads para 2
+cores de trabalho (já observado: `n_threads=20`, warmup de 114 s). O script lê
+`cpu.max` / `cpu.cfs_quota_us` e usa `quota/period` como teto, arredondando para
+baixo.
 
-Um relato real que motivou isso: server com 20 vCPU, `n_threads = 20`, e
-`llama-server started in 114.14 seconds` pra carregar o mesmo modelo de 550 MB que aqui carrega
-em 1.5 s. Não é o modelo, é thread.
+O limite vale para o que o start script sobe. Cliente que chama a API direto
+precisa mandar `options.num_thread` na requisição.
 
-Por isso:
+## Por que o start script vem do Git
 
-- `CPU_THREADS=0` (padrão) usa o número de vCPU que o container enxerga — teto seguro.
-- O teto respeita o **limite de CPU do painel**, não só o que `nproc` diz. Se o servidor tem
-  `200% CPU / 2 cores` num node de 20 vCPU, o script detecta pelo cgroup
-  (`cpu.max` = `200000 100000`) e usa 2, não 20. Sem isso o `nproc` continua reportando as 20
-  cores do host e o Ollama cria 20 threads pra 2 cores de trabalho.
-- O start script nunca deixa passar disso, e avisa no console se você tentar.
-- Modelos < 3B costumam render melhor com 4-8. Teste no seu hardware.
-- **O limite só vale pro chat.** Cliente que chama a API direto precisa mandar
-  `options.num_thread` na requisição. O console avisa isso no boot.
-- O Ollama não tem `OLLAMA_NUM_THREADS` (verificado no `envconfig`), e `taskset` não existe na
-  imagem yolks — por isso o caminho é `num_thread` por requisição.
+O painel corta o script da egg em ~64 KiB (medido: 65.614 bytes). Com o
+instalador e o start script embutidos, o instalador passava de 117 KB e chegava
+truncado no container (`here-document ... wanted CHATEOF`). Por isso a egg
+carrega só o instalador (13 KB hoje) e o instalador clona este repositório para
+pegar `scripts/ollama-start.sh`. Sem Git a instalação aborta de propósito, com o
+motivo na tela — melhor falhar cedo do que subir um server sem o que executar.
 
-Se o seu log mostrar `warming up the model with an empty run` e demorar minutos, é isso.
+## Open WebUI: detalhes que custaram tempo
+
+- Só roda em **Python 3.11/3.12**; a imagem yolks (Debian 13) traz 3.13. O
+  instalador baixa um CPython 3.11 standalone via `uv` — sem compilar, sem PPA.
+- `torch` é instalado com `--index-url https://download.pytorch.org/whl/cpu`: o
+  wheel padrão do PyPI puxa ~5 GB de libs CUDA inúteis em server sem GPU.
+- O instalador do `uv` grava recibo em `$XDG_CONFIG_HOME/uv` e pode falhar nisso
+  dentro do container; por isso tudo é escopado sob o diretório do server e o que
+  vale é o teste `[ -x uv ]`, não o exit code.
+- `/tmp` do container pode ser tmpfs pequeno: `TMPDIR` aponta para o disco do
+  server, senão a extração de wheels grandes (scipy) estoura.
+- `HOME` fica no diretório do server: o Open WebUI baixa o modelo de embeddings
+  (`all-MiniLM-L6-v2`) em `$HOME/.cache/huggingface` no primeiro boot.
+- Os dados ficam em `open-webui/` (SQLite) e sobrevivem a restart e a reinstall.
+- Não dá para servir o Open WebUI sob subpath: o SvelteKit usa caminhos absolutos
+  (`/assets`, `/api`, `/socket.io`). Por isso ele precisa da porta inteira.
+
+## O que foi testado de verdade
+
+Três suítes, **78 asserts**:
+
+```
+node tests/t-egg.mjs        # 45 asserts
+node tests/t-start.mjs      # 23 asserts
+node tests/t-api-live.mjs   # 10 asserts (pula sem Ollama no ar)
+```
+
+`t-start.mjs` executa `src/ollama-start.sh` de verdade contra `ollama` e
+`open-webui` falsos que imprimem o que receberam. Cobre: Open WebUI na
+`SERVER_PORT` com Ollama em `127.0.0.1:11434`; API pura quando desligado;
+fallback quando o `owui-venv/` não existe; `ENABLE_OPENWEBUI=1`; colisão
+`SERVER_PORT=11434` → interna em 11435; teto de threads via cgroup;
+`WEBUI_NAME`; `ENABLE_API_KEYS=true`; e a ausência de qualquer `node` no caminho.
+
+Além disso, validado com a stack real no ar (Ollama 0.34.0 + Open WebUI):
+
+- porta pública respondendo `<title>Open WebUI</title>` e `/health` `{"status":true}`;
+- Ollama só em `127.0.0.1:11434`, sem allocation própria;
+- signup do admin, criação de API key, `GET /api/v1/models`, chave errada → 401;
+- `POST /api/v1/chat/completions` → 200 (12 tok/s com `tinyllama`);
+- `api/version`, `api/tags`, `api/generate`, `api/chat` e streaming NDJSON.
 
 ## Limitações
 
-- **Sem GPU.** O Pterodactyl não aloca GPU; `discover` sempre vai achar só `cpu`.
-- **Nem o chat nem a API têm autenticação.** Quem souber o `IP:PORTA` usa. O Ollama tem uma flag
-  `OLLAMA_AUTH` no `envconfig`, mas eu **não testei** ela — não coloque em produção exposto na
-  internet sem um proxy com auth na frente.
-- **O chat é de propósito mínimo.** Arquivo único, sem histórico persistido, sem múltiplas
-  conversas, sem upload de imagem. É um quebra-galho pra testar o modelo, não um Open WebUI. Se
-  quiserem algo completo, o caminho é um server separado com Open WebUI.
-- **RAM é o teto.** O Ollama não vê o limite de cgroup do container de forma confiável — se você
-  pedir um modelo maior que a RAM do server, o kernel mata o processo com
-  `llama-server process has terminated: signal: killed`. Mantenha `MAX_LOADED_MODELS=1` e um
-  `CONTEXT_LENGTH` coerente.
-- **Instalação lenta.** São 1.4 GB do GitHub por server. Vários servers instalando ao mesmo tempo
-  competem pela banda do node.
-- **Reinstall não apaga modelos.** `/home/container/models` sobrevive; apague manualmente se quiser
-  trocar de modelo e recuperar disco.
+- **Sem GPU.** O Pterodactyl não repassa GPU para o container; a inferência é em
+  CPU. O instalador remove as libs de CUDA/ROCm/Vulkan/MLX (2,2 GB → ~70 MB).
+- Modelos grandes ficam lentos em CPU. Prefira `qwen3:0.6b`, `qwen2.5:0.5b`,
+  `tinyllama` — ou aceite a velocidade.
+- O Open WebUI custa ~1 GB de RAM parado. Se o server for pequeno, rode com
+  `ENABLE_OPENWEBUI=false` e use a API.
+- O primeiro boot do Open WebUI baixa o modelo de embeddings (~90 MB).
+
+## Histórico
+
+Este repositório já teve um chat próprio em HTML/JS ("LATAM IA") com proxy Node
+para dividir uma porta entre duas interfaces. Ele foi removido: o Open WebUI
+cobre o caso com muito mais recursos e dispensa o proxy — com uma interface só, ela
+binda a allocation direto. Está preservado no histórico do Git
+(último commit com o chat: `a2754a5`).

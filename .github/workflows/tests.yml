@@ -1,20 +1,37 @@
-# Suíte de mock (jsdom) roda em CI: nao precisa de Ollama nem de servidor.
-# Os testes ao vivo (t-live*.mjs) ficam fora - precisam de um Ollama rodando.
+# Suites que rodam sem servidor: validam a egg, os scripts e o start script
+# (t-start executa src/ollama-start.sh de verdade contra binarios-stub).
+# t-api-live se auto-pula quando nao ha Ollama em 127.0.0.1:11434 - em CI ele
+# pula, localmente ele valida a API contra a stack no ar.
 name: tests
 on:
   push:
   pull_request:
 jobs:
-  jsdom:
+  egg:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: deps
-        run: cd tests && npm init -y >/dev/null 2>&1 && npm install --no-audit --no-fund jsdom >/dev/null 2>&1
-      - name: t-chat2 (markdown, tools, params, interrupcao)
-        run: cd tests && node t-chat2.mjs
-      - name: t-features (memoria, fila, multi, pin, search, key, pwa)
-        run: cd tests && node t-features.mjs
+
+      - name: sintaxe dos shell scripts
+        run: |
+          bash -n scripts/ollama-install.sh
+          bash -n src/ollama-start.sh
+          echo "bash -n OK nos dois scripts"
+
+      - name: t-egg (estrutura da egg, variaveis, sincronia, residuos do chat)
+        run: node tests/t-egg.mjs
+
+      - name: t-start (start script executado com binarios-stub)
+        run: node tests/t-start.mjs
+
+      - name: t-api-live (pula sem Ollama)
+        run: node tests/t-api-live.mjs
+
+      - name: a egg commitada e a que o build gera
+        run: |
+          python3 build_egg.py >/dev/null
+          git diff --exit-code egg-ollama.json scripts/ollama-start.sh \
+            || { echo "egg-ollama.json ou scripts/ollama-start.sh desatualizados: rode python3 build_egg.py e commite."; exit 1; }

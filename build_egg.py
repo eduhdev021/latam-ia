@@ -14,9 +14,10 @@ egg = {
     "name": "Ollama (LLM)",
     "author": "eduardo@lagoshost.com.br",
     "description": (
-        "Servidor Ollama para rodar LLMs locais, com painel de chat web incluso na mesma porta.\n"
-        "Abra http://IP:PORTA/ no navegador para conversar; /api/* e /v1/* seguem disponiveis\n"
-        "(o /v1 e compativel com OpenAI). Desligue ENABLE_UI para expor somente a API.\n"
+        "Servidor Ollama para rodar LLMs locais, com o Open WebUI como interface na mesma porta.\n"
+        "Abra http://IP:PORTA/ no navegador: o primeiro acesso cria a conta admin. O Ollama fica so\n"
+        "em 127.0.0.1; a API compativel com OpenAI e o /api/v1 do Open WebUI (Settings > Account >\n"
+        "API Keys). Desligue ENABLE_OPENWEBUI para expor a API do Ollama direto na allocation.\n"
         "Inferencia em CPU - o Pterodactyl nao repassa GPU pro container.\n"
         "Requisitos: CPU com AVX2 (sem AVX funciona, mas cai no backend 'cpu' e fica muito lento), "
         "4 GB+ de RAM por modelo pequeno e disco suficiente pro modelo (ex.: qwen3:0.6b = 522 MB, "
@@ -164,9 +165,9 @@ egg = {
             "field_type": "text",
         },
         {
-            "name": "Painel de chat web",
-            "description": "true serve uma interface de chat em http://IP:PORTA/ e deixa o Ollama em 127.0.0.1. false expoe a API direto na allocation.",
-            "env_variable": "ENABLE_UI",
+            "name": "Open WebUI (interface)",
+            "description": "true instala e roda o Open WebUI na allocation do server (contas, RAG, historico) com o Ollama so em 127.0.0.1 - e o padrao, e o que da a interface web e a API /api/v1. false = API pura do Ollama na allocation, sem interface. Custa ~3 GB de disco e ~1 GB de RAM; deixe false se o disco for curto. Instala via Reinstall.",
+            "env_variable": "ENABLE_OPENWEBUI",
             "default_value": "true",
             "user_viewable": True,
             "user_editable": True,
@@ -184,8 +185,8 @@ egg = {
             "field_type": "text",
         },
         {
-            "name": "Repo do chat (Git)",
-            "description": "De onde o instalador baixa scripts/ui-chat.html e scripts/ui-proxy.js. Precisa ser publico - credencial dentro do server nao e segura.",
+            "name": "Repo dos scripts (Git)",
+            "description": "De onde o instalador baixa scripts/ollama-start.sh - ele nao cabe embutido na egg (o painel corta o script em ~64 KiB). Precisa ser publico: credencial dentro do server nao e segura.",
             "env_variable": "UI_REPO",
             "default_value": "https://github.com/eduhdev021/latam-ia.git",
             "user_viewable": True,
@@ -194,23 +195,13 @@ egg = {
             "field_type": "text",
         },
         {
-            "name": "Branch/tag do chat",
-            "description": "Branch, tag ou commit que o git clone usa. Troque e reinstale pra atualizar o chat.",
+            "name": "Branch/tag dos scripts",
+            "description": "Branch, tag ou commit que o git clone usa. Troque e rode Reinstall Server para atualizar o start script.",
             "env_variable": "UI_REF",
             "default_value": "main",
             "user_viewable": True,
             "user_editable": False,
             "rules": "nullable|string|max:64",
-            "field_type": "text",
-        },
-        {
-            "name": "Token de acesso do chat",
-            "description": "Senha para abrir o chat. VAZIO (padrao) = chat aberto: qualquer pessoa com a URL usa o chat E a API do Ollama, sem login. Se o server tiver allocation publica, DEFINA um token. Vale tambem para chamadas diretas de API: o proxy exige a sessao. Trocar o token invalida as sessoes antigas no proximo restart.",
-            "env_variable": "UI_TOKEN",
-            "default_value": "",
-            "user_viewable": True,
-            "user_editable": True,
-            "rules": "nullable|string|max:128",
             "field_type": "text",
         },
         {
@@ -247,13 +238,13 @@ print(f"gerado: {out} ({out.stat().st_size} bytes)")
 # 90 KB. Tudo que o servidor precisa vem do Git na instalacao.
 SRC = HERE / "src"
 SCRIPTS = HERE / "scripts"
-for name in ("chat.html", "proxy.js", "ollama-start.sh"):
+for name in ("ollama-start.sh",):
     src = SRC / name
-    dest = SCRIPTS / {"chat.html": "ui-chat.html", "proxy.js": "ui-proxy.js"}.get(name, name)
+    dest = SCRIPTS / name
     dest.write_text(src.read_text())
     print(f"  scripts/{dest.name} <- src/{name} ({dest.stat().st_size} bytes)")
 
-total = sum((SCRIPTS / n).stat().st_size for n in ("ui-chat.html", "ui-proxy.js", "ollama-start.sh"))
+total = sum((SCRIPTS / n).stat().st_size for n in ("ollama-start.sh",))
 print(f"  total entregue pelo Git: {total} bytes")
 print(f"  instalador embutido na egg: {len(INSTALL_SCRIPT)} bytes (limite do painel ~65536)")
 assert len(INSTALL_SCRIPT) < 60000, "o script da egg estouraria o limite de ~64 KiB do painel"

@@ -151,32 +151,24 @@ else
 fi
 
 # --------------------------------------------------------------- diretorios de runtime
-mkdir -p "${SERVER_DIR}/models" "${SERVER_DIR}/.ollama" "${SERVER_DIR}/temp" "${SERVER_DIR}/ui"
+mkdir -p "${SERVER_DIR}/models" "${SERVER_DIR}/.ollama" "${SERVER_DIR}/temp"
 
-# --------------------------------------------------------------- interface web (sidecar)
-# O chat vem do Git, entao da pra atualizar sem reinstalar a egg inteira.
+# --------------------------------------------------------------- repo (scripts)
+# O script de inicializacao vem do Git: ele nao cabe embutido na egg porque o
+# painel do Pterodactyl corta o script em ~64 KiB (medido: 65614 bytes).
 # Repo publico: nao precisa de credencial dentro do servidor.
 UI_REPO="${UI_REPO:-https://github.com/eduhdev021/latam-ia.git}"
 UI_REF="${UI_REF:-main}"
-UI_FROM_GIT="false"
+REPO_OK="false"
 
 command -v git >/dev/null 2>&1 || apt-get install -y --no-install-recommends git >/dev/null 2>&1 || true
 if command -v git >/dev/null 2>&1; then
-    echo "[egg] buscando o chat em ${UI_REPO} (${UI_REF})..."
-    rm -rf "${WORK}/ui-repo"
-    if git clone --depth 1 --branch "${UI_REF}" "${UI_REPO}" "${WORK}/ui-repo" >/dev/null 2>&1; then
-        if [ -f "${WORK}/ui-repo/scripts/ui-chat.html" ] && [ -f "${WORK}/ui-repo/scripts/ui-proxy.js" ]; then
-            cp "${WORK}/ui-repo/scripts/ui-chat.html" "${SERVER_DIR}/ui/chat.html"
-            cp "${WORK}/ui-repo/scripts/ui-proxy.js"  "${SERVER_DIR}/ui/proxy.js"
-            # Logo opcional: sem ele o chat cai no "L" de sempre.
-            cp "${WORK}/ui-repo/assets/logo-192.png" "${SERVER_DIR}/ui/logo-192.png" 2>/dev/null || true
-            cp "${WORK}/ui-repo/assets/logo-512.png" "${SERVER_DIR}/ui/logo-512.png" 2>/dev/null || true
-            git -C "${WORK}/ui-repo" rev-parse --short HEAD > "${SERVER_DIR}/ui/.git-ref" 2>/dev/null || true
-            UI_FROM_GIT="true"
-            echo "[egg] chat instalado do Git (commit $(cat "${SERVER_DIR}/ui/.git-ref" 2>/dev/null || echo '?'))"
-        else
-            echo "[egg] AVISO: o repo nao tem scripts/ui-chat.html e scripts/ui-proxy.js."
-        fi
+    echo "[egg] buscando os scripts em ${UI_REPO} (${UI_REF})..."
+    rm -rf "${WORK}/repo"
+    if git clone --depth 1 --branch "${UI_REF}" "${UI_REPO}" "${WORK}/repo" >/dev/null 2>&1; then
+        git -C "${WORK}/repo" rev-parse --short HEAD > "${SERVER_DIR}/.git-ref" 2>/dev/null || true
+        REPO_OK="true"
+        echo "[egg] repo clonado (commit $(cat "${SERVER_DIR}/.git-ref" 2>/dev/null || echo '?'))"
     else
         echo "[egg] AVISO: git clone falhou (repo fora do ar? branch '${UI_REF}' existe?)."
     fi
@@ -184,13 +176,9 @@ else
     echo "[egg] AVISO: git indisponivel no container de instalacao."
 fi
 
-# Sem Git nao da para trazer o chat: ele tem ~90 KB e o painel do Pterodactyl
-# corta o script da egg em ~64 KiB (medido: 65614 bytes), entao embutir o chat
-# aqui quebra o instalador com "here-document ... wanted CHATEOF".
-# O caminho do Git e o unico suportado. Sem ele o server sobe como API pura.
-# Sem o Git a instalacao nao pode continuar: o script de inicializacao tambem
-# vem de la (nao cabe embutido na egg, veja o comentario mais abaixo).
-if [ "${UI_FROM_GIT}" != "true" ]; then
+# Sem o Git a instalacao nao pode continuar: e de la que vem o script que sobe o
+# Ollama. Sem ele o servidor nao tem o que executar no start.
+if [ "${REPO_OK}" != "true" ]; then
     echo "[egg] ERRO: nao foi possivel baixar os arquivos do Git."
     echo "[egg]       Repo : ${UI_REPO}"
     echo "[egg]       Branch: ${UI_REF}"
@@ -200,30 +188,24 @@ if [ "${UI_FROM_GIT}" != "true" ]; then
     exit 1
 fi
 
-if [ "${UI_FROM_GIT}" = "true" ]; then
-    echo "true" > "${SERVER_DIR}/ui/.enabled"
-    echo "[egg] interface web em /home/container/ui/ (git=true)"
-else
-    rm -f "${SERVER_DIR}/ui/.enabled"
-fi
-
 # --------------------------------------------------------------- script de inicializacao
-# Nao e mais um heredoc dentro do instalador: o script vem do Git, igual ao chat.
-# Motivo: o painel do Pterodactyl corta o script da egg em ~64 KiB, e com o chat
-# e o start script embutidos o instalador passava de 117 KB e chegava truncado
-# no container (erro "here-document ... wanted CHATEOF").
-if [ ! -f "${WORK}/ui-repo/scripts/ollama-start.sh" ]; then
+# Nao e um heredoc dentro do instalador: vem do Git. Motivo: o painel do
+# Pterodactyl corta o script da egg em ~64 KiB, e com tudo embutido o instalador
+# passava de 117 KB e chegava truncado no container (erro "here-document ...
+# wanted CHATEOF").
+if [ ! -f "${WORK}/repo/scripts/ollama-start.sh" ]; then
     echo "[egg] ERRO: o repo nao tem scripts/ollama-start.sh."
     echo "[egg]       Esse arquivo e obrigatorio - e ele que sobe o Ollama."
     exit 1
 fi
-cp "${WORK}/ui-repo/scripts/ollama-start.sh" "${SERVER_DIR}/ollama-start.sh"
+cp "${WORK}/repo/scripts/ollama-start.sh" "${SERVER_DIR}/ollama-start.sh"
 echo "[egg] start script instalado do Git"
 chmod +x "${SERVER_DIR}/ollama-start.sh"
 
 # --------------------------------------------------------------- Open WebUI (opcional)
-# Segundo painel (contas de usuario, RAG, RBAC) rodando junto do chat LATAM IA.
-# Custa ~3 GB de disco e 1-2 GB de RAM em execucao. O Open WebUI so roda em
+# A interface web: contas de usuario, RAG, historico. Ocupa a allocation do
+# server e fala com o Ollama em localhost.
+# Custa ~3 GB de disco e ~1 GB de RAM em execucao. O Open WebUI so roda em
 # Python 3.11/3.12, e o yolks (Debian 13) traz 3.13 - entao o CPython 3.11 vem
 # standalone via uv (sem compilar, sem PPA). torch CPU-only de proposito: o
 # wheel padrao do PyPI puxa ~5 GB de libs CUDA inuteis em server sem GPU.
@@ -265,7 +247,7 @@ if [ "${ENABLE_OPENWEBUI}" = "true" ] || [ "${ENABLE_OPENWEBUI}" = "1" ]; then
         fi
         if [ -x "${SERVER_DIR}/owui-venv/bin/open-webui" ]; then
             echo "[egg] Open WebUI instalado -> $(du -sh "${SERVER_DIR}/owui-venv" 2>/dev/null | cut -f1) em owui-venv/"
-            echo "[egg]         Liga com ENABLE_OPENWEBUI=true + allocation da porta OPENWEBUI_PORT."
+            echo "[egg]         Liga com ENABLE_OPENWEBUI=true: sobe na allocation do server (SERVER_PORT)."
         else
             echo "[egg] AVISO: Open WebUI FALHOU na instalacao (rede? disco?). O resto funciona."
         fi
