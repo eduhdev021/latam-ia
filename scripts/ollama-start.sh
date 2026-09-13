@@ -147,6 +147,26 @@ if [ "${AUTO_PULL}" = "true" ] || [ "${AUTO_PULL}" = "1" ]; then
     fi
 fi
 
+# ----------------------------------------------------------------- Open WebUI (opcional)
+# Segundo painel junto do chat LATAM IA: contas, RAG, RBAC. Precisa de allocation
+# propria no painel (OPENWEBUI_PORT). Fala com o MESMO Ollama deste server.
+# Os dados (SQLite) ficam em open-webui/ e sobrevivem a restart.
+if [ "${ENABLE_OPENWEBUI}" = "true" ] || [ "${ENABLE_OPENWEBUI}" = "1" ]; then
+    OWUI_BIN="${BASE_DIR}/owui-venv/bin/open-webui"
+    if [ -x "${OWUI_BIN}" ]; then
+        OWUI_PORT="${OPENWEBUI_PORT:-3000}"
+        export DATA_DIR="${BASE_DIR}/open-webui"
+        export OLLAMA_BASE_URL="http://127.0.0.1:${OLLAMA_HOST##*:}"
+        mkdir -p "${DATA_DIR}"
+        echo "[egg] Open WebUI: http://SEU_IP:${OWUI_PORT} (aloque essa porta no painel)"
+        echo "[egg]             primeiro acesso cria a conta admin. Dados em open-webui/"
+        "${OWUI_BIN}" serve --host 0.0.0.0 --port "${OWUI_PORT}" &
+    else
+        echo "[egg] AVISO: ENABLE_OPENWEBUI=true mas owui-venv/ nao existe."
+        echo "[egg]         Rode Reinstall Server com ENABLE_OPENWEBUI=true para instalar."
+    fi
+fi
+
 if [ "${UI_ON}" = "true" ]; then
     # Ollama em background (os logs continuam indo pro console do painel, entao o
     # marcador "Listening on" segue funcionando) e o Node em primeiro plano.

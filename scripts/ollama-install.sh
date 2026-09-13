@@ -221,6 +221,57 @@ cp "${WORK}/ui-repo/scripts/ollama-start.sh" "${SERVER_DIR}/ollama-start.sh"
 echo "[egg] start script instalado do Git"
 chmod +x "${SERVER_DIR}/ollama-start.sh"
 
+# --------------------------------------------------------------- Open WebUI (opcional)
+# Segundo painel (contas de usuario, RAG, RBAC) rodando junto do chat LATAM IA.
+# Custa ~3 GB de disco e 1-2 GB de RAM em execucao. O Open WebUI so roda em
+# Python 3.11/3.12, e o yolks (Debian 13) traz 3.13 - entao o CPython 3.11 vem
+# standalone via uv (sem compilar, sem PPA). torch CPU-only de proposito: o
+# wheel padrao do PyPI puxa ~5 GB de libs CUDA inuteis em server sem GPU.
+if [ "${ENABLE_OPENWEBUI}" = "true" ] || [ "${ENABLE_OPENWEBUI}" = "1" ]; then
+    if [ -x "${SERVER_DIR}/owui-venv/bin/open-webui" ]; then
+        echo "[egg] Open WebUI ja esta instalado (owui-venv/). Para reinstalar, apague a pasta."
+    else
+        echo "[egg] Instalando Open WebUI (~3 GB de disco, alguns minutos)..."
+        UV_DIR="${SERVER_DIR}/.uv"
+        mkdir -p "${UV_DIR}/bin"
+        # XDG aponta pro disco do server: o instalador do uv grava recibo em
+        # $XDG_CONFIG_HOME/uv e o binario vale mais que o exit code do script.
+        if curl -fsSL https://astral.sh/uv/install.sh \
+             | env UV_INSTALL_DIR="${UV_DIR}/bin" INSTALLER_NO_MODIFY_PATH=1 \
+                   XDG_CONFIG_HOME="${UV_DIR}/config" XDG_DATA_HOME="${UV_DIR}/data" \
+                   sh >/dev/null 2>&1 \
+           && [ -x "${UV_DIR}/bin/uv" ]; then
+            UV="${UV_DIR}/bin/uv"
+            # Tudo escopado sob SERVER_DIR (sempre gravavel), independente do HOME
+            # de quem roda: uv grava o python, o cache e os shims la dentro.
+            export HOME="${SERVER_DIR}"
+            export XDG_DATA_HOME="${UV_DIR}/data"
+            export XDG_CONFIG_HOME="${UV_DIR}/config"
+            export XDG_CACHE_HOME="${UV_DIR}/cache"
+            export UV_PYTHON_INSTALL_DIR="${UV_DIR}/python"
+            export UV_CACHE_DIR="${UV_DIR}/cache"
+            export UV_PYTHON_BIN_DIR="${UV_DIR}/bin"
+            # /tmp de container pode ser tmpfs pequeno: extrair wheels grandes
+            # (scipy etc.) estoura. TMPDIR no disco do server, como no start script.
+            export TMPDIR="${SERVER_DIR}/temp"
+            mkdir -p "${TMPDIR}"
+            "${UV}" python install 3.11 >/dev/null 2>&1 \
+                && "${UV}" venv "${SERVER_DIR}/owui-venv" --python 3.11 >/dev/null 2>&1 \
+                && "${UV}" pip install --python "${SERVER_DIR}/owui-venv/bin/python" --no-cache \
+                       torch --index-url https://download.pytorch.org/whl/cpu >/dev/null 2>&1 \
+                && "${UV}" pip install --python "${SERVER_DIR}/owui-venv/bin/python" --no-cache \
+                       open-webui >/dev/null 2>&1
+            "${UV}" cache clean >/dev/null 2>&1 || true
+        fi
+        if [ -x "${SERVER_DIR}/owui-venv/bin/open-webui" ]; then
+            echo "[egg] Open WebUI instalado -> $(du -sh "${SERVER_DIR}/owui-venv" 2>/dev/null | cut -f1) em owui-venv/"
+            echo "[egg]         Liga com ENABLE_OPENWEBUI=true + allocation da porta OPENWEBUI_PORT."
+        else
+            echo "[egg] AVISO: Open WebUI FALHOU na instalacao (rede? disco?). O resto funciona."
+        fi
+    fi
+fi
+
 # --------------------------------------------------------------- smoke test
 echo "[egg] smoke test: subindo 'ollama serve' por alguns segundos..."
 export OLLAMA_MODELS="${WORK}/smoke-models"

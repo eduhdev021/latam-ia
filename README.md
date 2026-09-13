@@ -158,6 +158,8 @@ remover as libs de GPU fica em ~70 MB. O script avisa no log se o disco for insu
 | env | padrão | o que faz |
 |---|---|---|
 | `ENABLE_UI` | `true` | serve o chat em `http://IP:PORTA/`; `false` = só API na allocation |
+| `ENABLE_OPENWEBUI` | `false` | `true` instala (Reinstall) e roda o Open WebUI junto (~2,7 GB disco, ~920 MB RAM) |
+| `OPENWEBUI_PORT` | `3000` | porta do Open WebUI - precisa de allocation propria no painel |
 | `CPU_THREADS` | `0` | threads de inferência; `0` = número de vCPU do container |
 | `MODEL` | `qwen3:0.6b` | modelo baixado no start; vazio = não baixa nada |
 | `AUTO_PULL` | `true` | roda `ollama pull` assim que o servidor sobe |
@@ -373,6 +375,30 @@ As chamadas passam por `apiFetch`, então respeitam a **API externa/key** do
 grupo Conexão e a autenticação do proxy. Testado de verdade no `t-live6.mjs`
 (11/11): baixa `all-minilm:latest`, confirma que chegou no servidor, e apaga
 pela interface.
+
+## Open WebUI junto (opcional)
+
+Da pra rodar o **Open WebUI** (contas de usuario, RAG de documentos, RBAC) ao
+mesmo tempo que o chat LATAM IA, no mesmo server e usando o mesmo Ollama:
+
+1. Startup → `ENABLE_OPENWEBUI=true` (e `OPENWEBUI_PORT`, padrao 3000);
+2. Aloque a porta no painel: **Admin → seu server → Allocation → Allocate Port**
+   (o chat continua na `SERVER_PORT`; o Open WebUI precisa da allocation propria);
+3. **Reinstall Server** — o instalador baixa Python 3.11 (via uv, standalone),
+   torch **CPU-only** e o open-webui. O torch padrao do PyPI traria ~5 GB de
+   libs CUDA inuteis em server sem GPU; o caminho CPU-only deixa tudo em
+   **~2,7 GB de disco** (medido);
+4. Start → Open WebUI em `http://IP:3000` (primeiro acesso cria a conta admin),
+   chat LATAM IA segue em `http://IP:PORTA/`.
+
+Conta de custo (medido na pratica): ~2,7 GB de disco + **~920 MB de RAM** com o
+painel no ar — e RAM que sai da fatia dos modelos. Por isso vem desligado por
+padrao. Os dados (SQLite) ficam em `open-webui/` e sobrevivem a restart. Para
+reinstalar o Open WebUI, apague `owui-venv/` e rode Reinstall.
+
+Verificado de ponta a ponta: instalador com `ENABLE_OPENWEBUI=true` (uv +
+venv 3.11 + torch cpu + open-webui 0.11.3), start script subindo os tres
+servicos juntos, LATAM IA 200 + Open WebUI 200/health OK + Ollama 0.34.0.
 
 ## Tem painel oficial do Ollama?
 
