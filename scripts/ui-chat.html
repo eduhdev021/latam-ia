@@ -1146,10 +1146,37 @@
     return d;
   }
 
+  // Desenha o cartao de uma chamada de ferramenta e devolve um atualizador.
+  // 'result' existe quando a conversa esta sendo reaberta do localStorage;
+  // quando a chamada esta acontecendo agora, o cartao nasce "executando" e o
+  // localTool() chama o atualizador ao terminar.
+  function drawToolCall(body, fn, result) {
+    var box = document.createElement('div');
+    box.className = 'toolcall';
+    var stClass = result ? 'ok' : '';
+    var stText = result ? 'executada' : 'executando...';
+    box.innerHTML =
+      '<div class="tc-head"><span class="badge">TOOL</span><span>' + esc(fn.name || '?') + '</span>' +
+      '<span class="st ' + stClass + '">' + stText + '</span></div>' +
+      '<pre><code>' + esc(JSON.stringify(fn.arguments || {}, null, 2)) + '</code></pre>' +
+      (result ? '<div class="tc-args"><pre><code>' + esc(String(result.content || '').slice(0, 2000)) + '</code></pre></div>' : '');
+    body.appendChild(box);
+    return function (out) {
+      var st = box.querySelector('.st');
+      var bad = out && out.error;
+      st.textContent = bad ? 'erro' : 'executada';
+      st.className = 'st ' + (bad ? 'bad' : 'ok');
+      var args = document.createElement('div');
+      args.className = 'tc-args';
+      args.innerHTML = '<pre><code>' + esc(JSON.stringify(out, null, 2).slice(0, 2000)) + '</code></pre>';
+      box.appendChild(args);
+    };
+  }
+
   function drawToolCalls(msg, all, idx) {
     var el = addMessage('assistant');
     var body = el.parentNode;
-    (msg.tool_calls || []).forEach(function (tc, i) {
+    (msg.tool_calls || []).forEach(function (tc) {
       var fn = tc.function || {};
       // procura o resultado (role:tool) logo depois
       var result = null;
@@ -1158,14 +1185,7 @@
           result = all[j]; break;
         }
       }
-      var box = document.createElement('div');
-      box.className = 'toolcall';
-      box.innerHTML =
-        '<div class="tc-head"><span class="badge">TOOL</span><span>' + esc(fn.name || '?') + '</span>' +
-        '<span class="st ' + (result ? 'ok' : '') + '">' + (result ? 'executada' : 'pendente') + '</span></div>' +
-        '<pre><code>' + esc(JSON.stringify(fn.arguments || {}, null, 2)) + '</code></pre>' +
-        (result ? '<div class="tc-args"><pre><code>' + esc(String(result.content || '').slice(0, 2000)) + '</code></pre></div>' : '');
-      body.appendChild(box);
+      drawToolCall(body, fn, result);
     });
     return el;
   }
@@ -1618,24 +1638,36 @@
 
   function runTools(model, calls, answer, thinkBuf) {
     status('executando ' + calls.length + ' ferramenta' + (calls.length > 1 ? 's' : '') + '...');
-    // 1. mostra as chamadas
-    var lastUserIdx = -1;
-    for (var i = ensureChat().messages.length - 1; i >= 0; i--) {
-      if (ensureChat().messages[i].role === 'user') { lastUserIdx = i; break; }
-    }
     var c = ensureChat();
-    var hostIdx = c.messages.length - 1;   // o assistant que acabou de pedir
-    // remove o assistant "vazio" e desenha os tool calls no lugar
+    // Troca a bolha vazia do assistente (que so pediu a ferramenta) por uma que
+    // carrega os cartoes. Guardo a referencia ANTES de tirar do DOM: appendChild
+    // muda o no de pai, e sem isso o cartao ia parar na bolha errada.
     var nodes = wrap.querySelectorAll('.msg');
-    if (nodes.length) wrap.removeChild(nodes[nodes.length - 1]);
+    var bubble = nodes.length ? nodes[nodes.length - 1] : null;
+    if (bubble) wrap.removeChild(bubble);
     c.messages.pop();
     c.messages.push({ role: 'assistant', content: answer || '', thinking: thinkBuf || undefined, tool_calls: calls, ts: Date.now(), model: model });
-    drawToolCalls({ tool_calls: calls }, c.messages, c.messages.length - 1);
 
-    // 2. executa cada uma
-    var pending = calls.map(function (tc) {
+    var host = null;
+    if (bubble) {
+      host = bubble.querySelector('.body');
+      var content = bubble.querySelector('.content');
+      if (content) content.innerHTML = '';
+      if (thinkBuf) {
+        var th = bubble.querySelector('.think');
+        if (!th) drawThinking(host, thinkBuf);
+      }
+      wrap.appendChild(bubble);
+      stickToBottom();
+    }
+    var updaters = [];
+    if (host) {
+      calls.forEach(function (tc) { updaters.push(drawToolCall(host, tc.function || {}, null)); });
+    }
+    var pending = calls.map(function (tc, i) {
       var fn = tc.function || {};
       return localTool(fn.name, fn.arguments || {}).then(function (out) {
+        if (updaters[i]) updaters[i](out);
         return { name: fn.name, out: out };
       });
     });
