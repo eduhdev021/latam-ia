@@ -37,15 +37,28 @@ if [ -n "${ORIGINS}" ];           then export OLLAMA_ORIGINS="${ORIGINS}"; fi
 if [ -n "${KEEP_ALIVE}" ];        then export OLLAMA_KEEP_ALIVE="${KEEP_ALIVE}"; fi
 if [ -n "${NUM_PARALLEL}" ];      then export OLLAMA_NUM_PARALLEL="${NUM_PARALLEL}"; fi
 if [ -n "${MAX_LOADED_MODELS}" ]; then export OLLAMA_MAX_LOADED_MODELS="${MAX_LOADED_MODELS}"; fi
-if [ -n "${CONTEXT_LENGTH}" ];    then export OLLAMA_CONTEXT_LENGTH="${CONTEXT_LENGTH}"; fi
-if [ -n "${KV_CACHE_TYPE}" ];     then export OLLAMA_KV_CACHE_TYPE="${KV_CACHE_TYPE}"; fi
+# Defaults de memoria NO SCRIPT, nao so na egg. Se a variavel chegar vazia o
+# Ollama decide sozinho, e o que ele decide mata o processo: medido num server
+# pequeno sem CONTEXT_LENGTH nem KV_CACHE_TYPE -> n_ctx 4096, flash_attn auto,
+# "CPU KV buffer size = 448.00 MiB" e em seguida
+#   Load failed ... llama-server process has terminated: signal: killed
+# ou seja, o kernel matou por falta de RAM. O sintoma do lado do usuario e o
+# chat simplesmente parar de responder, sem erro na tela.
+CONTEXT_LENGTH="${CONTEXT_LENGTH:-2048}"
+KV_CACHE_TYPE="${KV_CACHE_TYPE:-q8_0}"
+FLASH_ATTENTION="${FLASH_ATTENTION:-1}"
+export OLLAMA_CONTEXT_LENGTH="${CONTEXT_LENGTH}"
+export OLLAMA_KV_CACHE_TYPE="${KV_CACHE_TYPE}"
 # O cache de prompt do llama-server guarda uma copia do estado de cada conversa na
 # RAM (medido: 87 MB por ~800 tokens) e o padrao dele e 8192 MiB - IGNORANDO o
 # limite do container. Num server de 8 GB com Open WebUI isso e receita para OOM.
 # O Ollama nao tem variavel propria, mas o llama-server le LLAMA_ARG_CACHE_RAM
 # (declarado em --help como env da flag --cache-ram). Verificado no v0.34.0:
 # com LLAMA_ARG_CACHE_RAM=256 o log passou a dizer "size limit: 256 MiB".
-if [ -n "${CACHE_RAM}" ];         then export LLAMA_ARG_CACHE_RAM="${CACHE_RAM}"; fi
+# Default no script, nao so na egg: quem atualiza so o start script pelo curl
+# (sem reimportar a egg) tambem precisa sair do teto de 8192 MiB.
+CACHE_RAM="${CACHE_RAM:-512}"
+export LLAMA_ARG_CACHE_RAM="${CACHE_RAM}"
 if [ -n "${LLM_LIBRARY}" ];       then export OLLAMA_LLM_LIBRARY="${LLM_LIBRARY}"; fi
 if [ "${FLASH_ATTENTION}" = "1" ] || [ "${FLASH_ATTENTION}" = "true" ]; then export OLLAMA_FLASH_ATTENTION=1; fi
 if [ "${DEBUG}" = "1" ] || [ "${DEBUG}" = "true" ];                     then export OLLAMA_DEBUG=1; fi

@@ -156,6 +156,15 @@ ok(Number(cacheRam.default_value) <= 512,
    `CACHE_RAM default ${cacheRam.default_value} MiB (o padrao do llama-server e 8192)`);
 ok(read("src/ollama-start.sh").includes('export LLAMA_ARG_CACHE_RAM="${CACHE_RAM}"'),
    "start script exporta LLAMA_ARG_CACHE_RAM (unica forma de chegar no llama-server)");
+ok(read("src/ollama-start.sh").includes('CACHE_RAM="${CACHE_RAM:-512}"'),
+   "o teto vale mesmo para quem atualizou so o script, sem reimportar a egg");
+// Sem default no script, variavel vazia vira decisao do Ollama: n_ctx 4096 + KV
+// f16 = 448 MiB so de cache K/V num modelo de 0.6B, e o kernel mata o runner
+// ("signal: killed") - o chat fica sem resposta e sem erro na tela.
+for (const [v, d] of [["CONTEXT_LENGTH", "2048"], ["KV_CACHE_TYPE", "q8_0"], ["FLASH_ATTENTION", "1"]]) {
+  ok(read("src/ollama-start.sh").includes(`${v}="\${${v}:-${d}}"`),
+     `${v} tem default ${d} no script (variavel vazia nao pode virar decisao do Ollama)`);
+}
 ok(read("src/ollama-start.sh").includes("check_memory"),
    "start script confere se modelo + interface cabem na RAM do container");
 

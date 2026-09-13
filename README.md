@@ -192,6 +192,20 @@ o que não cabe:
 A conta usa o maior modelo instalado, não a soma: com `MAX_LOADED_MODELS=1` só um
 carrega por vez.
 
+Os defaults de memória ficam **no start script**, não só na egg. Se a variável
+chegar vazia o Ollama decide sozinho, e o que ele decide mata o processo — medido
+num server pequeno sem `CONTEXT_LENGTH`/`KV_CACHE_TYPE`:
+
+```
+llama_context: n_ctx = 4096          flash_attn = auto
+llama_kv_cache: CPU KV buffer size = 448.00 MiB
+Load failed ... error="llama-server process has terminated: signal: killed"
+```
+
+`signal: killed` é o kernel matando por falta de RAM; o Ollama devolve 500 e o
+chat fica girando sem erro na tela. Com os defaults do script o mesmo boot dá
+`n_ctx 2048`, KV de 119 MiB, cache de prompt em 512 MiB e `HTTP 200`.
+
 **`KV_CACHE_TYPE=q8_0` é grátis.** Mesmo prompt, mesmo contexto:
 
 | KV cache | `runner.size` | velocidade |
@@ -243,10 +257,10 @@ motivo na tela — melhor falhar cedo do que subir um server sem o que executar.
 
 ## O que foi testado de verdade
 
-Três suítes, **130 asserts**:
+Três suítes, **134 asserts**:
 
 ```
-node tests/t-egg.mjs        # 78 asserts
+node tests/t-egg.mjs        # 82 asserts
 node tests/t-start.mjs      # 42 asserts
 node tests/t-api-live.mjs   # 10 asserts (pula sem Ollama no ar)
 ```
