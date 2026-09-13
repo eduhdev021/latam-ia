@@ -193,6 +193,28 @@ Os modelos ficam em `/home/container/models` e contam no limite de disco do serv
 - **`strip_ansi: true`** porque o `ollama pull` imprime barra de progresso com códigos ANSI, que
   poluem o console do painel.
 
+## Por que o chat vem do Git (e não de dentro da egg)
+
+O painel do Pterodactyl **corta o script de instalação da egg em ~64 KiB**.
+Medido no erro real:
+
+```
+/mnt/install/install.sh: line 1414: warning: here-document at line 457
+    delimited by end-of-file (wanted `CHATEOF')
+/mnt/install/install.sh: line 1415: syntax error: unexpected end of file
+```
+
+O chat tem 90 KB. Embutido na egg, o instalador ia a 117 KB e chegava truncado
+no container — cortado no meio do heredoc, daí o `wanted CHATEOF`.
+
+Por isso a egg só carrega **11 KB** de instalador, e tudo que o servidor precisa
+(`ui-chat.html`, `ui-proxy.js`, `ollama-start.sh`) vem do `git clone` na
+instalação. Consequência: **sem acesso ao Git a instalação falha de propósito**,
+com mensagem dizendo o repo e a branch que tentou. Não há fallback embutido —
+não cabe.
+
+Atualizar o chat = `git push` + *Reinstall Server*. Não precisa mexer na egg.
+
 ## O que o chat tem
 
 Arquivo único (`scripts/ui-chat.html`, ~89 KB), sem build e sem dependência npm.

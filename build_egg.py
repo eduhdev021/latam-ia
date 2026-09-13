@@ -241,15 +241,19 @@ out.write_text(json.dumps(egg, indent=4, ensure_ascii=False) + "\n")
 print(f"gerado: {out} ({out.stat().st_size} bytes)")
 
 
-def extract(marker: str, dest: pathlib.Path) -> None:
-    """Tira um heredoc do install script e grava como copia legivel."""
-    head = f"<< '{marker}'\n"
-    start = INSTALL_SCRIPT.index(head) + len(head)
-    end = INSTALL_SCRIPT.index(f"\n{marker}\n", start)
-    dest.write_text(INSTALL_SCRIPT[start : end + 1])
-    print(f"  referencia: {dest.name} ({dest.stat().st_size} bytes)")
+# A direcao inverteu: antes os arquivos eram EXTRAIDOS de heredocs dentro do
+# instalador. Agora src/ e a fonte de verdade e o instalador NAO embute mais
+# nada - o painel do Pterodactyl corta o script da egg em ~64 KiB, e o chat tem
+# 90 KB. Tudo que o servidor precisa vem do Git na instalacao.
+SRC = HERE / "src"
+SCRIPTS = HERE / "scripts"
+for name in ("chat.html", "proxy.js", "ollama-start.sh"):
+    src = SRC / name
+    dest = SCRIPTS / {"chat.html": "ui-chat.html", "proxy.js": "ui-proxy.js"}.get(name, name)
+    dest.write_text(src.read_text())
+    print(f"  scripts/{dest.name} <- src/{name} ({dest.stat().st_size} bytes)")
 
-
-extract("STARTEOF", HERE / "scripts" / "ollama-start.sh")
-extract("PROXYEOF", HERE / "scripts" / "ui-proxy.js")
-extract("CHATEOF", HERE / "scripts" / "ui-chat.html")
+total = sum((SCRIPTS / n).stat().st_size for n in ("ui-chat.html", "ui-proxy.js", "ollama-start.sh"))
+print(f"  total entregue pelo Git: {total} bytes")
+print(f"  instalador embutido na egg: {len(INSTALL_SCRIPT)} bytes (limite do painel ~65536)")
+assert len(INSTALL_SCRIPT) < 60000, "o script da egg estouraria o limite de ~64 KiB do painel"
