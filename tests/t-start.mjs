@@ -364,6 +364,13 @@ exit 0
   ok(sim.includes("LOGIN CONFIRMADO"), "quando o cloud responde, confirma");
   const sem = run(base, { ...envBase, SIGNIN: "0" });
   ok(!sem.includes("ollama.com/connect"), "com SIGNIN=0 nao tenta logar");
+  // sem a variavel na egg, o arquivo .signin faz o mesmo servico
+  writeFileSync(join(base, ".signin"), "");
+  const porArquivo = run(base, { ...envBase, SIGNIN: "0", STUB_AUTH: "1", _signin_tries: "2" });
+  ok(porArquivo.includes("ollama.com/connect"),
+     "o arquivo .signin aciona o login mesmo com SIGNIN=0 (nao precisa reimportar a egg)");
+  ok(porArquivo.includes("apague ele depois"), "manda apagar o arquivo");
+  rmSync(join(base, ".signin"));
   rmSync(base, { recursive: true, force: true });
 }
 

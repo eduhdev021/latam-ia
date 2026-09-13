@@ -242,7 +242,9 @@ conta em ollama.com. Não usam sua CPU nem sua RAM, e contam na sua conta de lá
 O login é `ollama signin`, que abre um navegador. Num container não tem
 navegador e o Pterodactyl não dá terminal, então a egg faz pelo console:
 
-1. `SIGNIN=1` na aba Startup → **Start**.
+1. `SIGNIN=1` na aba Startup → **Start**. (Sem a variável na egg? Crie um
+   arquivo vazio chamado `.signin` no diretório do server pelo gerenciador de
+   arquivos do painel e dê Start — funciona igual, e você apaga o arquivo depois.)
 2. O console imprime `https://ollama.com/connect?name=...&key=...` — abra no
    celular ou no PC, faça login e autorize.
 3. O start fica testando e avisa `LOGIN CONFIRMADO` quando destravar. Volte
@@ -317,11 +319,11 @@ motivo na tela — melhor falhar cedo do que subir um server sem o que executar.
 
 ## O que foi testado de verdade
 
-Três suítes, **150 asserts**:
+Três suítes, **153 asserts**:
 
 ```
-node tests/t-egg.mjs        # 89 asserts
-node tests/t-start.mjs      # 51 asserts
+node tests/t-egg.mjs        # 90 asserts
+node tests/t-start.mjs      # 53 asserts
 node tests/t-api-live.mjs   # 10 asserts (pula sem Ollama no ar)
 ```
 

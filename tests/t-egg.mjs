@@ -170,6 +170,8 @@ ok(read("src/ollama-start.sh").includes('BROWSER=/bin/true "${OLLAMA_BIN}" signi
    "login roda com BROWSER=/bin/true (senao o xdg-open esconde a URL)");
 // `ollama signin` imprime a URL e sai em <1 s: exit 0 nao significa logado.
 // A unica prova e o modelo cloud parar de responder {"error":"Unauthorized"}.
+ok(read("src/ollama-start.sh").includes('[ -e "${BASE_DIR}/.signin" ]'),
+   "o arquivo .signin tambem aciona o login (para quem nao pode reimportar a egg)");
 ok(read("src/ollama-start.sh").includes("*Unauthorized*)"),
    "confirma o login pelo erro Unauthorized do modelo cloud, nao pelo exit code");
 

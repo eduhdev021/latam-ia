@@ -76,7 +76,7 @@ if [ "${OWUI_SERVE}" = "true" ]; then
     echo "[egg] interface : porta publica ${SERVER_PORT} -> Open WebUI em http://SEU_IP:${SERVER_PORT}/"
 fi
 echo "[egg] models    : ${OLLAMA_MODELS}"
-echo "[egg] cache     : prompt ${CACHE_RAM:-8192 (padrao do llama-server!)} MiB | K/V ${KV_CACHE_TYPE:-f16}"
+echo "[egg] cache     : prompt ${CACHE_RAM} MiB | K/V ${KV_CACHE_TYPE}"
 
 # Limite de memoria DESTE container. Nao da para usar MemTotal nem SERVER_MEMORY
 # sozinho: o Ollama mede "inference compute" pelo total da MAQUINA, entao ele acha
@@ -192,8 +192,7 @@ check_memory() {
     _reserva=300
     [ "${OWUI_SERVE}" = "true" ] && _reserva=1300   # Open WebUI: ~700 MB-1 GB medido
     _precisa=$(( _model_mb + _reserva ))
-    echo "[egg] memoria   : maior modelo ${_model_mb} MB + reserva ${_reserva} MB = ${_precisa} MB"
-    echo "[egg]             limite do container: ${MEM_LIMIT_MB} MB"
+    echo "[egg] conta RAM : maior modelo ${_model_mb} MB + reserva ${_reserva} MB = ${_precisa} MB de ${MEM_LIMIT_MB} MB"
     if [ "${_precisa}" -gt "${MEM_LIMIT_MB}" ]; then
         echo "[egg] AVISO: NAO CABE. Faltam $(( _precisa - MEM_LIMIT_MB )) MB."
         echo "[egg]         O chat vai travar ou o kernel vai matar o processo (OOM)."
@@ -217,7 +216,11 @@ signin_cloud() {
     echo "[egg] ------------------------------------------------"
     echo "[egg] LOGIN NO OLLAMA.COM (para modelos cloud)"
     echo "[egg] Abra a URL abaixo no seu navegador, faca login e autorize."
-    echo "[egg] Depois volte aqui e ponha SIGNIN=0."
+    if [ -e "${BASE_DIR}/.signin" ]; then
+        echo "[egg] Acionado pelo arquivo ${BASE_DIR}/.signin - apague ele depois de autorizar."
+    else
+        echo "[egg] Depois volte aqui e ponha SIGNIN=0."
+    fi
     echo "[egg] ------------------------------------------------"
     BROWSER=/bin/true "${OLLAMA_BIN}" signin 2>&1 | sed 's/^/[egg]   /'
     # `ollama signin` SO imprime a URL e sai na hora - ele nao espera a
@@ -285,7 +288,11 @@ bake_threads() {
             echo "[egg] AUTO_PULL ligado mas MODEL esta vazio - nada sera baixado."
         fi
     fi
-    if [ "${SIGNIN}" = "1" ] || [ "${SIGNIN}" = "true" ]; then
+    # Dois gatilhos. SIGNIN=1 exige a variavel na egg (reimport). O arquivo
+    # .signin existe para quem nao consegue reimportar: cria um arquivo vazio
+    # chamado .signin no diretorio do server pelo gerenciador de arquivos do
+    # painel, da Start, e apaga depois. Funciona sem mexer na egg.
+    if [ "${SIGNIN}" = "1" ] || [ "${SIGNIN}" = "true" ] || [ -e "${BASE_DIR}/.signin" ]; then
         signin_cloud
     fi
     bake_threads
