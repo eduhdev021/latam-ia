@@ -179,18 +179,23 @@ const COMMON = {
   console.log("\n[8] venv gravado com o caminho da instalacao (/mnt/server != /home/container)");
   const base = setup({ withOwui: false });
   const ERRADO = "/prefixo-da-instalacao";
-  const py = join(base, ".uv", "python", "cpython-3.11-linux-x86_64-gnu", "bin");
-  mkdirSync(py, { recursive: true });
+  const VER = "cpython-3.11.16-linux-x86_64-gnu";   // diretorio real
+  const ALIAS = "cpython-3.11-linux-x86_64-gnu";    // atalho que o uv cria (absoluto!)
+  const pyReal = join(base, ".uv", "python", VER, "bin");
+  mkdirSync(pyReal, { recursive: true });
   // stub do interpretador: recebe o script como $1 e roda com bash, que e o que o
-  // CPython faz com um console script. ("exec \"$@\"" aqui daria loop infinito:
-  // o script tem shebang apontando de volta pro proprio interpretador.)
-  writeFileSync(join(py, "python3.11"), "#!/bin/bash\nexec /bin/bash \"$@\"\n");
-  spawnSync("chmod", ["+x", join(py, "python3.11")]);
+  // CPython faz com um console script. ("exec \"$@\"" daria loop infinito: o
+  // script tem shebang apontando de volta pro proprio interpretador.)
+  writeFileSync(join(pyReal, "python3.11"), "#!/bin/bash\nexec /bin/bash \"$@\"\n");
+  spawnSync("chmod", ["+x", join(pyReal, "python3.11")]);
+  // o uv grava este atalho como ABSOLUTO, apontando pro prefixo da instalacao.
+  // Foi o que quebrou no server de verdade: reescrever so o venv nao basta.
+  spawnSync("ln", ["-sfn", `${ERRADO}/.uv/python/${VER}`, join(base, ".uv", "python", ALIAS)]);
 
   mkdirSync(join(base, "owui-venv", "bin"), { recursive: true });
   writeFileSync(join(base, "owui-venv", "pyvenv.cfg"),
-    `home = ${ERRADO}/.uv/python/cpython-3.11-linux-x86_64-gnu/bin\nuv = 0.12.13\nversion_info = 3.11\n`);
-  spawnSync("ln", ["-sfn", `${ERRADO}/.uv/python/cpython-3.11-linux-x86_64-gnu/bin/python3.11`,
+    `home = ${ERRADO}/.uv/python/${ALIAS}/bin\nuv = 0.12.13\nversion_info = 3.11\n`);
+  spawnSync("ln", ["-sfn", `${ERRADO}/.uv/python/${ALIAS}/bin/python3.11`,
                    join(base, "owui-venv", "bin", "python")]);
   writeFileSync(join(base, "owui-venv", "bin", "open-webui"),
     `#!${ERRADO}/owui-venv/bin/python\necho "OWUI-ARGS:$*"\nexit 0\n`);
@@ -198,17 +203,17 @@ const COMMON = {
 
   const out = run(base, { ...COMMON, SERVER_PORT: "25565", ENABLE_OPENWEBUI: "true" });
   ok(out.includes(`ajustando caminhos do venv (${ERRADO} -> ${base})`), "detecta e anuncia a reescrita");
+  ok(readlinkSync(join(base, ".uv", "python", ALIAS)) === `${base}/.uv/python/${VER}`,
+     "ATALHO ABSOLUTO do .uv reapontado -> " + readlinkSync(join(base, ".uv", "python", ALIAS)));
   ok(readFileSync(join(base, "owui-venv", "pyvenv.cfg"), "utf8")
-       .includes(`home = ${base}/.uv/python/cpython-3.11-linux-x86_64-gnu/bin`),
-     "pyvenv.cfg aponta pro BASE_DIR real");
+       .includes(`home = ${base}/.uv/python/${ALIAS}/bin`), "pyvenv.cfg aponta pro BASE_DIR real");
   ok(readlinkSync(join(base, "owui-venv", "bin", "python")).startsWith(base + "/"),
-     "symlink bin/python reapontado -> " + readlinkSync(join(base, "owui-venv", "bin", "python")));
+     "symlink bin/python reapontado");
   ok(readFileSync(join(base, "owui-venv", "bin", "open-webui"), "utf8")
        .startsWith(`#!${base}/owui-venv/bin/python`), "shebang do open-webui reescrito");
   ok(field(out, "OWUI-ARGS") === "serve --host 0.0.0.0 --port 25565",
      "e o Open WebUI sobe na allocation em vez de morrer com 'required file not found'");
 
-  // segunda passada: nao pode mexer em nada de novo
   const out2 = run(base, { ...COMMON, SERVER_PORT: "25565", ENABLE_OPENWEBUI: "true" });
   ok(!out2.includes("ajustando caminhos"), "idempotente: segunda execucao nao reescreve");
   rmSync(base, { recursive: true, force: true });

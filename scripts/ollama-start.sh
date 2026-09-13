@@ -156,46 +156,77 @@ owui_fix_paths() {
     _cfg="${_venv}/pyvenv.cfg"
     [ -f "${_cfg}" ] || return 0
     _old_home="$(sed -n 's/^home = //p' "${_cfg}" | head -1)"
+    # prefixo gravado na instalacao, deduzido do "home" do pyvenv.cfg
+    _old_prefix=""
     case "${_old_home}" in
-        */.uv/*) ;;            # venv criado pelo uv, como o instalador faz
-        *) return 0 ;;         # layout diferente: nao mexe em nada
+        */.uv/*)             _old_prefix="${_old_home%%/.uv/*}" ;;
+        */.local/share/uv/*) _old_prefix="${_old_home%%/.local/share/uv/*}" ;;
     esac
-    _old_prefix="${_old_home%%/.uv/*}"
     [ -n "${_old_prefix}" ] || return 0
     if [ "${_old_prefix}" = "${BASE_DIR}" ]; then return 0; fi
     _new_home="${BASE_DIR}${_old_home#"${_old_prefix}"}"
-    if [ ! -x "${_new_home}/python3.11" ]; then
-        echo "[egg] AVISO: nao achei o Python do Open WebUI em ${_new_home}."
-        echo "[egg]         Apague owui-venv/ e .uv/ e rode Reinstall Server."
-        return 0
-    fi
     echo "[egg] Open WebUI: ajustando caminhos do venv (${_old_prefix} -> ${BASE_DIR})"
-    sed -i "s#^home = .*#home = ${_new_home}#" "${_cfg}"
-    for _l in "${_venv}/bin/python" "${_venv}/bin/python3" "${_venv}/bin/python3.11"; do
-        [ -L "${_l}" ] || continue
-        _t="$(readlink "${_l}")"
-        case "${_t}" in
-            "${_old_prefix}"/*) ln -sfn "${BASE_DIR}${_t#"${_old_prefix}"}" "${_l}" ;;
-        esac
+
+    # 1) SYMLINKS ABSOLUTOS - o passo que faltava. O uv cria um atalho
+    #    .uv/python/cpython-3.11-linux-x86_64-gnu -> <prefixo>/.uv/python/cpython-3.11.X-...
+    #    e ele e ABSOLUTO. Sem repointar, o caminho novo resolve de volta pro
+    #    prefixo antigo e o start morre com "required file not found".
+    _sym=0
+    for _dir in "${BASE_DIR}/.uv" "${_venv}"; do
+        [ -d "${_dir}" ] || continue
+        while IFS= read -r _s; do
+            _t="$(readlink "${_s}" 2>/dev/null)" || continue
+            case "${_t}" in
+                "${_old_prefix}"/*)
+                    ln -sfn "${BASE_DIR}${_t#"${_old_prefix}"}" "${_s}"
+                    _sym=$(( _sym + 1 ))
+                    ;;
+            esac
+        done < <(find "${_dir}" -type l 2>/dev/null)
     done
-    _n=0
+
+    # 2) pyvenv.cfg
+    sed -i "s#^home = .*#home = ${_new_home}#" "${_cfg}"
+
+    # 3) shebangs dos executaveis (delimitador @ porque o padrao contem "#!")
+    _she=0
     for _f in "${_venv}"/bin/*; do
         [ -f "${_f}" ] && [ ! -L "${_f}" ] || continue
         case "$(head -1 "${_f}" 2>/dev/null)" in
             "#!${_old_prefix}/"*)
-                # delimitador @ de proposito: o padrao contem "#!" e o sed
-                # interpretaria o "#" como fim da expressao.
                 sed -i "1s@^#!${_old_prefix}/@#!${BASE_DIR}/@" "${_f}"
-                _n=$(( _n + 1 ))
+                _she=$(( _she + 1 ))
                 ;;
         esac
     done
+
+    # 4) scripts de activate (nao usamos, mas deixa consistente)
     for _a in "${_venv}/bin/activate" "${_venv}/bin/activate.csh" \
               "${_venv}/bin/activate.fish" "${_venv}/bin/activate.nu" \
               "${_venv}/bin/activate.bat"; do
         [ -f "${_a}" ] && sed -i "s#${_old_prefix}/#${BASE_DIR}/#g" "${_a}"
     done
-    echo "[egg]             ${_n} shebang(s) + pyvenv.cfg + symlink corrigidos"
+
+    # 5) confere que o interpretador resolve; senao procura outro 3.11 no server
+    if [ ! -x "${_new_home}/python3.11" ]; then
+        _found=""
+        for _c in "${BASE_DIR}"/.uv/python/cpython-3.11*/bin/python3.11 \
+                  "${BASE_DIR}"/.local/share/uv/python/cpython-3.11*/bin/python3.11; do
+            [ -x "${_c}" ] && { _found="${_c}"; break; }
+        done
+        if [ -n "${_found}" ]; then
+            _new_home="$(dirname "${_found}")"
+            sed -i "s#^home = .*#home = ${_new_home}#" "${_cfg}"
+            ln -sfn "${_found}" "${_venv}/bin/python"
+        fi
+    fi
+    if [ ! -x "${_new_home}/python3.11" ]; then
+        echo "[egg] AVISO: nao achei Python 3.11 dentro de ${BASE_DIR}."
+        echo "[egg]         Provavelmente foi instalado fora do diretorio do server e"
+        echo "[egg]         nao sobreviveu. Apague owui-venv/ e .uv/ e rode Reinstall."
+        return 0
+    fi
+    echo "[egg]             ${_sym} symlink(s) + ${_she} shebang(s) + pyvenv.cfg"
 }
 
 if [ "${OWUI_WANTED}" = "true" ]; then

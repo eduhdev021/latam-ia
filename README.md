@@ -161,17 +161,22 @@ motivo na tela — melhor falhar cedo do que subir um server sem o que executar.
   executáveis de `bin/`, no symlink `bin/python` e no `home` do `pyvenv.cfg`. Sem
   corrigir, o start morre com
   `owui-venv/bin/open-webui: cannot execute: required file not found` — o kernel
-  não acha o interpretador do shebang. O start script reescreve o prefixo para o
-  `BASE_DIR` real em todo boot (idempotente), então instalações antigas se
-  consertam sozinhas no primeiro start, sem baixar nada de novo.
+  não acha o interpretador do shebang. São **quatro** lugares, e o quarto é o que
+  pega: além do `pyvenv.cfg`, do symlink `bin/python` e dos shebangs de `bin/`, o
+  uv cria `.uv/python/cpython-3.11-linux-x86_64-gnu` como **symlink absoluto**
+  para o prefixo da instalação — reescrever só o venv não resolve, o caminho novo
+  volta pelo atalho para o prefixo antigo. O start script varre os symlinks de
+  `.uv/` e do venv e reescreve o prefixo para o `BASE_DIR` real em todo boot
+  (idempotente), então instalações antigas se consertam sozinhas no primeiro
+  start, sem baixar nada de novo.
 
 ## O que foi testado de verdade
 
-Três suítes, **85 asserts**:
+Três suítes, **86 asserts**:
 
 ```
 node tests/t-egg.mjs        # 45 asserts
-node tests/t-start.mjs      # 29 asserts
+node tests/t-start.mjs      # 30 asserts
 node tests/t-api-live.mjs   # 10 asserts (pula sem Ollama no ar)
 ```
 
