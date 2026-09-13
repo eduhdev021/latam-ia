@@ -64,11 +64,11 @@ muito lento (o start script avisa no console).
 
 ## Variáveis (aba Startup)
 
-18 variáveis. As que importam no dia a dia:
+19 variáveis. As que importam no dia a dia:
 
 | variável | padrão | o que faz |
 | --- | --- | --- |
-| `MODEL` | `qwen3:0.6b` | baixado automaticamente na instalação/start. |
+| `MODEL` | `qwen3:0.6b` | baixado no start. Aceita vários: `qwen3:0.6b, tinyllama`. |
 | `ENABLE_OPENWEBUI` | `true` | interface web na allocation + Ollama em localhost. `false` = API pura. |
 | `AUTO_PULL` | `true` | baixa `MODEL` ao subir. |
 | `CPU_THREADS` | `auto` | `auto` = o teto de CPU que este container tem direito (lê o cgroup). Aceita número fixo. |
@@ -79,6 +79,7 @@ muito lento (o start script avisa no console).
 | `NUM_PARALLEL` / `MAX_LOADED_MODELS` | `1` / `1` | suba só se sobrar RAM. |
 | `OLLAMA_VERSION` | `latest` | usada na instalação/reinstall. |
 | `UI_REPO` / `UI_REF` | este repo / `main` | de onde vem o start script. |
+| `SIGNIN` | `0` | `1` imprime a URL de login do ollama.com no console (modelos `-cloud`). |
 
 O resto (`ORIGINS`, `FLASH_ATTENTION`, `DEBUG`, `LLM_LIBRARY`, `STRIP_GPU_LIBS`)
 está documentado na própria egg.
@@ -215,6 +216,52 @@ chat fica girando sem erro na tela. Com os defaults do script o mesmo boot dá
 
 Menos RAM **e** mais rápido. Precisa de `FLASH_ATTENTION=1`, que já é o padrão.
 
+## Modelos: baixar e usar a nuvem da Ollama
+
+**Não existe busca.** O Ollama não tem comando `search` (verificado: `unknown
+command "search"`), então o nome tem que ser exato — a lista está em
+<https://ollama.com/library>. Três caminhos para baixar:
+
+1. **Pelo chat.** Digite o nome no seletor de modelo do Open WebUI; quando não
+   existe localmente ele oferece **`Pull "<nome>" from Ollama.com`**. É **só
+   para admin**. O endpoint por trás é `POST /ollama/api/pull` — testado:
+   `200` e `{"status":"success"}`; com nome inexistente,
+   `{"error":"pull model manifest: file does not exist"}`.
+2. **Pela aba Startup.** `MODEL` aceita vários nomes separados por vírgula
+   (`qwen3:0.6b, tinyllama`) e baixa no start. É o caminho que funciona sem
+   terminal.
+3. **Pela API** (com token de admin do Open WebUI):
+   `curl -X POST .../ollama/api/pull -d '{"name":"llama3.2:1b"}'`
+
+### Modelos cloud (a "API key da Ollama")
+
+Os modelos com sufixo `-cloud` (`gpt-oss:120b-cloud`, `deepseek-v3.1:671b-cloud`)
+**não rodam no seu server** — rodam na infraestrutura da Ollama e precisam de
+conta em ollama.com. Não usam sua CPU nem sua RAM, e contam na sua conta de lá.
+
+O login é `ollama signin`, que abre um navegador. Num container não tem
+navegador e o Pterodactyl não dá terminal, então a egg faz pelo console:
+
+1. `SIGNIN=1` na aba Startup → **Start**.
+2. O console imprime `https://ollama.com/connect?name=...&key=...` — abra no
+   celular ou no PC, faça login e autorize.
+3. O start fica testando e avisa `LOGIN CONFIRMADO` quando destravar. Volte
+   `SIGNIN=0`.
+
+Dois detalhes que custaram tempo:
+
+- O `xdg-open` tenta seis navegadores e imprime seis `not found`, escondendo a
+  URL. O script roda o login com `BROWSER=/bin/true` para a saída sair limpa.
+- `ollama signin` **imprime a URL e sai em menos de 1 s** — exit code `0` não
+  significa logado. A confirmação real é o modelo cloud parar de responder
+  `{"error":"Unauthorized"}`, que é o que ele devolve sem login (medido).
+
+A credencial fica em `.ollama/id_ed25519`, e `HOME` aponta para o diretório do
+server — sobrevive a restart, **não** a Reinstall.
+
+> Verificado até a URL, a limpeza da saída e a lógica de confirmação. Não
+> completei uma autorização real: não tenho conta em ollama.com para testar.
+
 ## Por que o start script vem do Git
 
 O painel corta o script da egg em ~64 KiB (medido: 65.614 bytes). Com o
@@ -257,11 +304,11 @@ motivo na tela — melhor falhar cedo do que subir um server sem o que executar.
 
 ## O que foi testado de verdade
 
-Três suítes, **134 asserts**:
+Três suítes, **148 asserts**:
 
 ```
-node tests/t-egg.mjs        # 82 asserts
-node tests/t-start.mjs      # 42 asserts
+node tests/t-egg.mjs        # 87 asserts
+node tests/t-start.mjs      # 51 asserts
 node tests/t-api-live.mjs   # 10 asserts (pula sem Ollama no ar)
 ```
 

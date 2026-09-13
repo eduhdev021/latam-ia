@@ -322,5 +322,73 @@ exit 0
   rmSync(base, { recursive: true, force: true });
 }
 
+// ---------------------------------------------------------------- 11. login no ollama.com
+{
+  console.log("\n[11] SIGNIN=1 imprime a URL de login no console (container nao tem navegador)");
+  const base = mkdtempSync(join(tmpdir(), "eggstart-"));
+  for (const d of ["ollama/bin", "owui-venv/bin", "stub-bin"]) mkdirSync(join(base, d), { recursive: true });
+  writeFileSync(join(base, "ollama", "VERSION"), "v0.0.0-teste\n");
+  writeFileSync(join(base, "stub-bin", "curl"),
+    `#!/bin/bash
+case "$*" in
+  *api/generate*) [ -n "$STUB_AUTH" ] && echo '{"response":"hi"}' || echo '{"error":"Unauthorized"}' ;;
+esac
+exit 0
+`);
+  spawnSync("chmod", ["+x", join(base, "stub-bin", "curl")]);
+  writeFileSync(join(base, "ollama", "bin", "ollama"), `#!/bin/bash
+case "$1" in
+  serve)  exit 0 ;;
+  list)   printf 'NAME\n' ;;
+  signin) [ "$BROWSER" = "/bin/true" ] || { echo "NAO_SET_BROWSER"; }
+          echo "If your browser did not open, navigate to:"
+          echo "    https://ollama.com/connect?name=teste&key=CHAVE"
+          exit 0 ;;
+esac
+exit 0
+`);
+  spawnSync("chmod", ["+x", join(base, "ollama", "bin", "ollama")]);
+  writeFileSync(join(base, "owui-venv", "bin", "open-webui"), "#!/bin/bash\nsleep 2\nexit 0\n");
+  spawnSync("chmod", ["+x", join(base, "owui-venv", "bin", "open-webui")]);
+
+  const envBase = { ...COMMON, SERVER_PORT: "25565", ENABLE_OPENWEBUI: "true",
+                    PATH: join(base, "stub-bin") + ":" + process.env.PATH };
+  const out = run(base, { ...envBase, SIGNIN: "1", _signin_tries: "2" });
+  ok(out.includes("https://ollama.com/connect?name=teste&key=CHAVE"),
+     "a URL de login aparece no console");
+  ok(!out.includes("NAO_SET_BROWSER"), "BROWSER=/bin/true (sem a pilha de erros do xdg-open)");
+  ok(!out.includes("LOGIN CONFIRMADO"),
+     "sem autorizar NAO diz que logou (signin sai na hora, exit 0 nao prova nada)");
+  ok(out.includes("Esperando voce autorizar"), "fica esperando a autorizacao de verdade");
+  const sim = run(base, { ...envBase, SIGNIN: "1", STUB_AUTH: "1", _signin_tries: "2" });
+  ok(sim.includes("LOGIN CONFIRMADO"), "quando o cloud responde, confirma");
+  const sem = run(base, { ...envBase, SIGNIN: "0" });
+  ok(!sem.includes("ollama.com/connect"), "com SIGNIN=0 nao tenta logar");
+  rmSync(base, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------- 12. varios modelos em MODEL
+{
+  console.log("\n[12] MODEL aceita varios nomes (no painel e a unica entrada sem terminal)");
+  const base = mkdtempSync(join(tmpdir(), "eggstart-"));
+  for (const d of ["ollama/bin", "owui-venv/bin", "stub-bin"]) mkdirSync(join(base, d), { recursive: true });
+  writeFileSync(join(base, "ollama", "VERSION"), "v0.0.0-teste\n");
+  writeFileSync(join(base, "stub-bin", "curl"), "#!/bin/bash\nexit 0\n");
+  spawnSync("chmod", ["+x", join(base, "stub-bin", "curl")]);
+  writeFileSync(join(base, "ollama", "bin", "ollama"),
+    "#!/bin/bash\ncase \"$1\" in serve) exit 0 ;; list) printf 'NAME\n' ;; esac\nexit 0\n");
+  spawnSync("chmod", ["+x", join(base, "ollama", "bin", "ollama")]);
+  writeFileSync(join(base, "owui-venv", "bin", "open-webui"), "#!/bin/bash\nsleep 2\nexit 0\n");
+  spawnSync("chmod", ["+x", join(base, "owui-venv", "bin", "open-webui")]);
+
+  const out = run(base, { ...COMMON, SERVER_PORT: "25565", ENABLE_OPENWEBUI: "true",
+                          AUTO_PULL: "true", MODEL: "qwen3:0.6b, tinyllama",
+                          PATH: join(base, "stub-bin") + ":" + process.env.PATH });
+  ok(out.includes("Baixando 'qwen3:0.6b'"), "baixou o primeiro");
+  ok(out.includes("Baixando 'tinyllama'"), "baixou o segundo da lista separada por virgula");
+  ok(!out.includes("Baixando 'qwen3:0.6b, tinyllama'"), "nao tratou a lista como um nome so");
+  rmSync(base, { recursive: true, force: true });
+}
+
 console.log(`\n${fail === 0 ? "PASSOU" : "FALHOU"}: ${pass} asserts ok, ${fail} falhas`);
 process.exit(fail === 0 ? 0 : 1);

@@ -36,9 +36,9 @@ const vars = egg.variables.map((v) => v.env_variable);
 const ESPERADAS = [
   "MODEL", "AUTO_PULL", "KEEP_ALIVE", "NUM_PARALLEL",
   "MAX_LOADED_MODELS", "CONTEXT_LENGTH", "KV_CACHE_TYPE", "ORIGINS",
-  "CACHE_RAM", "FLASH_ATTENTION", "DEBUG", "LLM_LIBRARY",
-  "ENABLE_OPENWEBUI", "CPU_THREADS", "UI_REPO", "UI_REF",
-  "OLLAMA_VERSION", "STRIP_GPU_LIBS"
+  "SIGNIN", "CACHE_RAM", "FLASH_ATTENTION", "DEBUG",
+  "LLM_LIBRARY", "ENABLE_OPENWEBUI", "CPU_THREADS", "UI_REPO",
+  "UI_REF", "OLLAMA_VERSION", "STRIP_GPU_LIBS"
 ];
 ok(vars.length === ESPERADAS.length, `${vars.length} variaveis (esperado ${ESPERADAS.length})`);
 ok(JSON.stringify(vars) === JSON.stringify(ESPERADAS), "lista e ordem conferem");
@@ -78,7 +78,10 @@ const atribuidas = new Set([
   ...[...codigo.matchAll(/\bfor\s+([A-Z][A-Z_0-9]{2,})\s+in\b/g)].map((m) => m[1]),
   ...[...codigo.matchAll(/\bexport\s+([A-Z][A-Z_0-9]{2,})\b/g)].map((m) => m[1]),
 ]);
-const naoDeclaradas = [...lidas].filter((v) => !vars.includes(v) && !doPainel.has(v) && !atribuidas.has(v));
+// Variaveis especiais do proprio bash: nao vem da egg nem do painel.
+const doShell = new Set(["PIPESTATUS", "RANDOM", "LINENO", "SECONDS", "EUID", "SHELLOPTS",
+  "BASHOPTS", "BASH_VERSINFO", "FUNCNAME", "DIRSTACK", "OPTARG", "OPTIND", "IFS", "REPLY"]);
+const naoDeclaradas = [...lidas].filter((v) => !vars.includes(v) && !doPainel.has(v) && !atribuidas.has(v) && !doShell.has(v));
 ok(naoDeclaradas.length === 0, "nenhum script le variavel que a egg nao declara" +
    (naoDeclaradas.length ? " -> " + naoDeclaradas.join(", ") : ""));
 
@@ -161,6 +164,15 @@ ok(read("src/ollama-start.sh").includes('CACHE_RAM="${CACHE_RAM:-512}"'),
 // Sem default no script, variavel vazia vira decisao do Ollama: n_ctx 4096 + KV
 // f16 = 448 MiB so de cache K/V num modelo de 0.6B, e o kernel mata o runner
 // ("signal: killed") - o chat fica sem resposta e sem erro na tela.
+const signin = egg.variables.find((v) => v.env_variable === "SIGNIN");
+ok(!!signin && signin.default_value === "0", "SIGNIN existe e fica desligado por padrao");
+ok(read("src/ollama-start.sh").includes('BROWSER=/bin/true "${OLLAMA_BIN}" signin'),
+   "login roda com BROWSER=/bin/true (senao o xdg-open esconde a URL)");
+// `ollama signin` imprime a URL e sai em <1 s: exit 0 nao significa logado.
+// A unica prova e o modelo cloud parar de responder {"error":"Unauthorized"}.
+ok(read("src/ollama-start.sh").includes("*Unauthorized*)"),
+   "confirma o login pelo erro Unauthorized do modelo cloud, nao pelo exit code");
+
 for (const [v, d] of [["CONTEXT_LENGTH", "2048"], ["KV_CACHE_TYPE", "q8_0"], ["FLASH_ATTENTION", "1"]]) {
   ok(read("src/ollama-start.sh").includes(`${v}="\${${v}:-${d}}"`),
      `${v} tem default ${d} no script (variavel vazia nao pode virar decisao do Ollama)`);

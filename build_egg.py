@@ -56,7 +56,7 @@ egg = {
     "variables": [
         {
             "name": "Modelo",
-            "description": "Modelo baixado automaticamente no start (ex.: llama3.2:1b, qwen3:0.6b, phi3:mini). Vazio = nao baixa nada.",
+            "description": "Modelo baixado automaticamente no start. Aceita varios separados por virgula: 'qwen3:0.6b, tinyllama'. O nome tem que ser exato - os nomes estao em ollama.com/library e o Ollama nao tem comando de busca. Vazio = nao baixa nada.",
             "env_variable": "MODEL",
             "default_value": "qwen3:0.6b",
             "user_viewable": True,
@@ -132,6 +132,16 @@ egg = {
             "user_viewable": True,
             "user_editable": True,
             "rules": "nullable|string|max:255",
+            "field_type": "text",
+        },
+        {
+            "name": "Login no ollama.com (modelos cloud)",
+            "description": "1 faz o login no ollama.com pelo console: o start imprime uma URL, voce abre no celular/PC e autoriza. Necessario para os modelos que rodam na nuvem da Ollama (nomes terminados em -cloud, ex.: gpt-oss:120b-cloud). A credencial fica gravada no server; depois volte para 0. O container nao tem navegador nem terminal, por isso o login e por URL.",
+            "env_variable": "SIGNIN",
+            "default_value": "0",
+            "user_viewable": True,
+            "user_editable": True,
+            "rules": "required|in:0,1,true,false",
             "field_type": "text",
         },
         {

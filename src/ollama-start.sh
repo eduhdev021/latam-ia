@@ -202,6 +202,46 @@ check_memory() {
     fi
 }
 
+# ------------------------------------------------------------------- ollama.com
+# Modelos cloud (ex.: gpt-oss:120b-cloud, deepseek-v3.1:671b-cloud) rodam na
+# infraestrutura da Ollama e precisam de conta em ollama.com. O login e
+# `ollama signin`, que abre um navegador - num container nao tem navegador, e o
+# painel do Pterodactyl nao da terminal pro usuario. Entao a egg faz o login pelo
+# console: imprime a URL, o usuario abre no celular/PC e autoriza.
+#
+# BROWSER=/bin/true nao e enfeite: sem isso o xdg-open tenta seis navegadores,
+# imprime "not found" seis vezes e a URL some no meio do barulho. A credencial
+# fica em ${HOME}/.ollama/id_ed25519, e HOME aponta pro diretorio do server,
+# entao sobrevive a restart (mas NAO a reinstall).
+signin_cloud() {
+    echo "[egg] ------------------------------------------------"
+    echo "[egg] LOGIN NO OLLAMA.COM (para modelos cloud)"
+    echo "[egg] Abra a URL abaixo no seu navegador, faca login e autorize."
+    echo "[egg] Depois volte aqui e ponha SIGNIN=0."
+    echo "[egg] ------------------------------------------------"
+    BROWSER=/bin/true "${OLLAMA_BIN}" signin 2>&1 | sed 's/^/[egg]   /'
+    # `ollama signin` SO imprime a URL e sai na hora - ele nao espera a
+    # autorizacao (medido: exit 0 em menos de 1 s). Entao exit code nao prova
+    # nada. A confirmacao real e o modelo cloud parar de responder
+    # {"error":"Unauthorized"} - que e o que ele devolve sem login (medido).
+    echo "[egg] Esperando voce autorizar no navegador (ate 10 min)..."
+    _tries="${_signin_tries:-40}"      # 40 x 15 s = 10 min; _signin_tries existe p/ teste
+    _n=0
+    while [ "${_n}" -lt "${_tries}" ]; do
+        _n=$(( _n + 1 ))
+        _r="$(curl -sS --max-time 60 "http://127.0.0.1:${READY_PORT}/api/generate" \
+              -d '{"model":"gpt-oss:20b-cloud","prompt":"hi","stream":false,"options":{"num_predict":1}}' 2>/dev/null)"
+        case "${_r}" in
+            *Unauthorized*) sleep 15 ;;
+            "")             sleep 15 ;;
+            *) echo "[egg] LOGIN CONFIRMADO: os modelos *-cloud ja respondem."
+               echo "[egg] Ex.: gpt-oss:20b-cloud, gpt-oss:120b-cloud, deepseek-v3.1:671b-cloud."
+               return 0 ;;
+        esac
+    done
+    echo "[egg] Deu 10 minutos e a autorizacao nao chegou. Ponha SIGNIN=1 de novo para nova URL."
+}
+
 bake_threads() {
     _mf="${TMPDIR}/Modelfile.threads"
     for _m in $("${OLLAMA_BIN}" list 2>/dev/null | awk 'NR>1 && $1 ~ /:/ {print $1}'); do
@@ -229,15 +269,24 @@ bake_threads() {
     done
     if [ "${AUTO_PULL}" = "true" ] || [ "${AUTO_PULL}" = "1" ]; then
         if [ -n "${MODEL}" ]; then
-            echo "[egg] Baixando '${MODEL}'... (o progresso aparece no console)"
-            if "${OLLAMA_BIN}" pull "${MODEL}"; then
-                echo "[egg] Modelo '${MODEL}' pronto para uso."
-            else
-                echo "[egg] Falha ao baixar '${MODEL}'. Verifique o nome e o espaco em disco."
-            fi
+            # MODEL aceita varios nomes separados por virgula ou espaco, ex.:
+            # "qwen3:0.6b, tinyllama". No painel essa e a entrada pratica para
+            # escolher modelo: o Ollama nao tem comando de busca e o servidor
+            # nao da terminal.
+            for _want in $(printf '%s' "${MODEL}" | tr ',' ' '); do
+                echo "[egg] Baixando '${_want}'... (o progresso aparece no console)"
+                if "${OLLAMA_BIN}" pull "${_want}"; then
+                    echo "[egg] Modelo '${_want}' pronto para uso."
+                else
+                    echo "[egg] Falha ao baixar '${_want}'. Verifique o nome e o espaco em disco."
+                fi
+            done
         else
             echo "[egg] AUTO_PULL ligado mas MODEL esta vazio - nada sera baixado."
         fi
+    fi
+    if [ "${SIGNIN}" = "1" ] || [ "${SIGNIN}" = "true" ]; then
+        signin_cloud
     fi
     bake_threads
     check_memory
