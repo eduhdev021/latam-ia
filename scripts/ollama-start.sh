@@ -1,0 +1,97 @@
+#!/bin/bash
+# Ollama egg - inicializacao. Editavel pelo File Manager do painel.
+# As variaveis (MODEL, AUTO_PULL, KEEP_ALIVE...) vem da aba Startup do servidor.
+# BASE_DIR so existe pra facilitar teste fora do painel; no Pterodactyl e /home/container.
+BASE_DIR="${BASE_DIR:-/home/container}"
+cd "${BASE_DIR}" || exit 1
+
+OLLAMA_ROOT="${BASE_DIR}/ollama"
+OLLAMA_BIN="${OLLAMA_ROOT}/bin/ollama"
+
+export HOME="${BASE_DIR}"
+export OLLAMA_MODELS="${BASE_DIR}/models"
+export TMPDIR="${BASE_DIR}/temp"
+export LD_LIBRARY_PATH="${OLLAMA_ROOT}/lib/ollama${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+# as libs de Vulkan sao removidas na instalacao, entao desliga a sondagem
+export OLLAMA_VULKAN=0
+
+# Com a interface ligada, o Node ocupa a allocation publica e o Ollama fica so em
+# 127.0.0.1 (porta interna nao precisa de allocation no Pterodactyl).
+UI_ON="false"
+if [ "${ENABLE_UI}" = "true" ] || [ "${ENABLE_UI}" = "1" ]; then
+    if ! command -v node >/dev/null 2>&1; then
+        echo "[egg] ERRO: ENABLE_UI=true mas nao existe 'node' nesta imagem."
+        echo "[egg] Use ghcr.io/parkervcp/yolks:nodejs_24 ou desligue a variavel ENABLE_UI."
+        exit 1
+    fi
+    UI_ON="true"
+    INTERNAL_PORT=11434
+    if [ "${INTERNAL_PORT}" = "${SERVER_PORT}" ]; then INTERNAL_PORT=11435; fi
+    export OLLAMA_HOST="127.0.0.1:${INTERNAL_PORT}"
+    export OLLAMA_INTERNAL_PORT="${INTERNAL_PORT}"
+else
+    export OLLAMA_HOST="0.0.0.0:${SERVER_PORT}"
+fi
+
+mkdir -p "${OLLAMA_MODELS}" "${TMPDIR}" "${HOME}/.ollama"
+
+if [ -n "${ORIGINS}" ];           then export OLLAMA_ORIGINS="${ORIGINS}"; fi
+if [ -n "${KEEP_ALIVE}" ];        then export OLLAMA_KEEP_ALIVE="${KEEP_ALIVE}"; fi
+if [ -n "${NUM_PARALLEL}" ];      then export OLLAMA_NUM_PARALLEL="${NUM_PARALLEL}"; fi
+if [ -n "${MAX_LOADED_MODELS}" ]; then export OLLAMA_MAX_LOADED_MODELS="${MAX_LOADED_MODELS}"; fi
+if [ -n "${CONTEXT_LENGTH}" ];    then export OLLAMA_CONTEXT_LENGTH="${CONTEXT_LENGTH}"; fi
+if [ -n "${KV_CACHE_TYPE}" ];     then export OLLAMA_KV_CACHE_TYPE="${KV_CACHE_TYPE}"; fi
+if [ -n "${LLM_LIBRARY}" ];       then export OLLAMA_LLM_LIBRARY="${LLM_LIBRARY}"; fi
+if [ "${FLASH_ATTENTION}" = "1" ] || [ "${FLASH_ATTENTION}" = "true" ]; then export OLLAMA_FLASH_ATTENTION=1; fi
+if [ "${DEBUG}" = "1" ] || [ "${DEBUG}" = "true" ];                     then export OLLAMA_DEBUG=1; fi
+
+if [ ! -x "${OLLAMA_BIN}" ]; then
+    echo "[egg] ERRO: ${OLLAMA_BIN} nao encontrado."
+    echo "[egg] Rode 'Reinstall Server' no painel (Admin > Servers > seu server > Reinstall)."
+    exit 1
+fi
+
+echo "[egg] =============================================="
+echo "[egg] Ollama $(cat "${OLLAMA_ROOT}/VERSION" 2>/dev/null || echo '?') | inferencia em CPU"
+echo "[egg] api       : ${OLLAMA_HOST}"
+if [ "${UI_ON}" = "true" ]; then
+    echo "[egg] chat web  : porta publica ${SERVER_PORT} -> abra http://SEU_IP:${SERVER_PORT}/ no navegador"
+fi
+echo "[egg] models    : ${OLLAMA_MODELS}"
+echo "[egg] memoria   : ${SERVER_MEMORY} MB (limite do container)"
+echo "[egg] =============================================="
+
+if ! grep -q -m1 -o ' avx2 ' /proc/cpuinfo 2>/dev/null; then
+    echo "[egg] AVISO: esta CPU nao tem AVX2 - a inferencia vai usar o backend 'cpu' basico e ficar bem lenta."
+fi
+
+# ----------------------------------------------------------------- download automatico
+if [ "${AUTO_PULL}" = "true" ] || [ "${AUTO_PULL}" = "1" ]; then
+    if [ -n "${MODEL}" ]; then
+        (
+            READY_PORT="${OLLAMA_HOST##*:}"
+            echo "[egg] Aguardando o servidor subir para baixar '${MODEL}'..."
+            for _ in $(seq 1 60); do
+                if curl -fsS "http://127.0.0.1:${READY_PORT}/api/tags" >/dev/null 2>&1; then break; fi
+                sleep 1
+            done
+            echo "[egg] Baixando '${MODEL}'... (o progresso aparece no console)"
+            if "${OLLAMA_BIN}" pull "${MODEL}"; then
+                echo "[egg] Modelo '${MODEL}' pronto para uso."
+            else
+                echo "[egg] Falha ao baixar '${MODEL}'. Verifique o nome do modelo e o espaco em disco."
+            fi
+        ) &
+    else
+        echo "[egg] AUTO_PULL esta ligado mas a variavel MODEL esta vazia - nada sera baixado."
+    fi
+fi
+
+if [ "${UI_ON}" = "true" ]; then
+    # Ollama em background (os logs continuam indo pro console do painel, entao o
+    # marcador "Listening on" segue funcionando) e o Node em primeiro plano.
+    "${OLLAMA_BIN}" serve &
+    exec node "${BASE_DIR}/ui/proxy.js"
+fi
+
+exec "${OLLAMA_BIN}" serve
