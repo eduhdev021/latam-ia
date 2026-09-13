@@ -439,6 +439,12 @@ exit 0
        < src.indexOf('exec "${OWUI_BIN}" serve'),
      "espera o Ollama responder antes de entregar a allocation ao Open WebUI");
   ok(src.includes("Network Problem"), "o aviso cita o sintoma que o usuario ve");
+  // O CI pegou isto: um printf sem '\n' antes da espera deixava o "serve" do
+  // Ollama (background) colado na mesma linha, e o assert ^OLLAMA-ARGS: nao
+  // casava. Trava a forma de imprimir, nao so o conteudo.
+  ok(!/printf '\[egg\]/.test(src), "nenhum printf deixa linha aberta na saida");
+  ok(src.includes('echo "[egg] API do Ollama em 127.0.0.1:${_ip}: ${_st} (${_i}s)"'),
+     "o relato da espera sai em uma linha unica e completa");
 
   // funcional: banco com URL errada -> script corrige
   const base = mkdtempSync(join(tmpdir(), "eggstart-"));

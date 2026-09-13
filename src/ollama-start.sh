@@ -481,20 +481,19 @@ if [ "${OWUI_WANTED}" = "true" ]; then
         # Problem". Espera o /api/version responder antes de entregar a allocation.
         _ip="${OLLAMA_HOST##*:}"
         _i=0
-        printf '[egg] Esperando a API do Ollama em 127.0.0.1:%s ...' "${_ip}"
+        _st="nao respondeu em 60 s"
         while [ "${_i}" -lt 60 ]; do
-            if ! kill -0 "${_opid}" 2>/dev/null; then
-                echo " o processo do Ollama MORREU."
-                break
-            fi
+            if ! kill -0 "${_opid}" 2>/dev/null; then _st="o processo MORREU"; break; fi
             if curl -sS --max-time 2 -o /dev/null "http://127.0.0.1:${_ip}/api/version" 2>/dev/null; then
-                echo " ok (${_i}s)"
-                break
+                _st="ok"; break
             fi
             _i=$((_i + 1)); sleep 1
         done
-        if [ "${_i}" -ge 60 ]; then
-            echo " nao respondeu em 60 s."
+        # Linha unica e completa: um printf sem '\n' aqui deixaria o "serve" do
+        # Ollama (que sobe em background) colado no fim dela, e a saida ficaria
+        # dependente de timing. Foi exatamente isso que quebrou o CI.
+        echo "[egg] API do Ollama em 127.0.0.1:${_ip}: ${_st} (${_i}s)"
+        if [ "${_st}" != "ok" ]; then
             echo "[egg] AVISO: o Open WebUI vai mostrar 'Ollama: Network Problem'."
             echo "[egg]         Olhe acima deste ponto nos logs: o erro do Ollama esta la."
         fi
