@@ -219,5 +219,60 @@ const COMMON = {
   rmSync(base, { recursive: true, force: true });
 }
 
+// ---------------------------------------------------------------- 9. teto de threads gravado no modelo
+{
+  console.log("\n[9] CPU_THREADS e gravado como num_thread dentro de cada modelo");
+  const base = mkdtempSync(join(tmpdir(), "eggstart-"));
+  const bin = join(base, "stub-bin");
+  const log = join(base, "create.log");
+  mkdirSync(join(base, "ollama", "bin"), { recursive: true });
+  mkdirSync(join(base, "owui-venv", "bin"), { recursive: true });
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(base, "ollama", "VERSION"), "v0.0.0-teste\n");
+
+  // curl falso: a espera pelo Ollama passa na hora (sem servidor de verdade)
+  writeFileSync(join(bin, "curl"), "#!/bin/bash\nexit 0\n");
+  spawnSync("chmod", ["+x", join(bin, "curl")]);
+
+  // ollama falso. O script chama `create` com stdout no /dev/null, entao o que
+  // interessa vai para um arquivo.
+  writeFileSync(join(base, "ollama", "bin", "ollama"), `#!/bin/bash
+case "$1" in
+  serve) echo "OLLAMA-ARGS:$*"; echo "OLLAMA-HOST:$OLLAMA_HOST"; exit 0 ;;
+  list)  printf 'NAME              ID     SIZE    MODIFIED\nqwen3:0.6b        a1     1 GB    agora\ntinyllama:latest  b2     1 GB    agora\n'; exit 0 ;;
+  show)  [ -n "$STUB_JA_TEM" ] && printf '  Parameters\n    num_thread    %s\n' "$STUB_JA_TEM"; exit 0 ;;
+  create) echo "$2 <= $(tr '\n' '|' < "$4")" >> "$STUB_LOG"; exit 0 ;;
+esac
+exit 0
+`);
+  spawnSync("chmod", ["+x", join(base, "ollama", "bin", "ollama")]);
+
+  writeFileSync(join(base, "owui-venv", "bin", "open-webui"),
+    "#!/bin/bash\nsleep 2\necho \"OWUI-ARGS:$*\"\nexit 0\n");
+  spawnSync("chmod", ["+x", join(base, "owui-venv", "bin", "open-webui")]);
+
+  const envBase = { ...COMMON, SERVER_PORT: "25565", ENABLE_OPENWEBUI: "true",
+                    CPU_THREADS: "2", STUB_LOG: log, PATH: bin + ":" + process.env.PATH };
+  const gravados = () => { try { return readFileSync(log, "utf8"); } catch { return ""; } };
+
+  const out = run(base, envBase);
+  const g1 = gravados();
+  ok(g1.includes("qwen3:0.6b <= FROM qwen3:0.6b|PARAMETER num_thread 2|"),
+     "qwen3:0.6b regravado com num_thread 2");
+  ok(g1.includes("tinyllama:latest <= FROM tinyllama:latest|PARAMETER num_thread 2|"),
+     "tinyllama:latest regravado com num_thread 2");
+  ok(out.includes("num_thread=2 gravado no modelo"), "avisa no console o que gravou");
+
+  rmSync(log, { force: true });
+  run(base, { ...envBase, STUB_JA_TEM: "2" });
+  ok(gravados() === "", "idempotente: nao regravou o que ja tem num_thread 2");
+
+  rmSync(log, { force: true });
+  run(base, { ...envBase, STUB_JA_TEM: "8" });
+  ok(gravados().split("\n").filter(Boolean).length === 2,
+     "regravou os 2 quando o valor gravado era outro (8 -> 2)");
+  rmSync(base, { recursive: true, force: true });
+}
+
 console.log(`\n${fail === 0 ? "PASSOU" : "FALHOU"}: ${pass} asserts ok, ${fail} falhas`);
 process.exit(fail === 0 ? 0 : 1);

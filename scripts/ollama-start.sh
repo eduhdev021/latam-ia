@@ -113,30 +113,61 @@ if [ "${CPU_THREADS}" -gt "${NCPU}" ] 2>/dev/null; then
 fi
 export CPU_THREADS
 echo "[egg] threads   : ${CPU_THREADS} (vCPU visiveis: ${NCPU})"
-echo "[egg] AVISO     : o limite vale para o Open WebUI. Clientes que chamam a API direto"
-echo "[egg]             precisam mandar options.num_thread=${CPU_THREADS} na requisicao."
+echo "[egg]             sera gravado como 'num_thread' dentro de cada modelo, entao vale"
+echo "[egg]             para qualquer cliente - inclusive o Open WebUI, que nao manda esse"
+echo "[egg]             parametro (o Ollama nao tem variavel de ambiente para threads)."
 
-# ----------------------------------------------------------------- download automatico
-if [ "${AUTO_PULL}" = "true" ] || [ "${AUTO_PULL}" = "1" ]; then
-    if [ -n "${MODEL}" ]; then
-        (
-            READY_PORT="${OLLAMA_HOST##*:}"
-            echo "[egg] Aguardando o servidor subir para baixar '${MODEL}'..."
-            for _ in $(seq 1 60); do
-                if curl -fsS "http://127.0.0.1:${READY_PORT}/api/tags" >/dev/null 2>&1; then break; fi
-                sleep 1
-            done
+# ----------------------------------------------------------------- teto de threads
+# Ollama NAO tem variavel de ambiente para threads. Verificado no binario v0.34.0:
+# nao existe nenhuma OLLAMA_*THREAD* e a string "CPU_THREADS" aparece 0 vezes.
+# OMP_NUM_THREADS tambem e ignorado (medido: com OMP_NUM_THREADS=2 o runner seguiu
+# em n_threads=1). O unico jeito de o teto valer para QUALQUER cliente e gravar
+# "PARAMETER num_thread" dentro do proprio modelo.
+#
+# Isso importa porque o Open WebUI nao manda num_thread: sem o parametro gravado,
+# o Ollama usa o que nproc diz - e num container limitado por quota CFS o nproc
+# reporta TODAS as cores do host (ex.: 10 num server de "200% CPU / 2 cores").
+# Muitas threads para pouca quota = thrashing + throttle a cada 100 ms, e a
+# geracao fica tao lenta que parece travada.
+bake_threads() {
+    _mf="${TMPDIR}/Modelfile.threads"
+    for _m in $("${OLLAMA_BIN}" list 2>/dev/null | awk 'NR>1 && $1 ~ /:/ {print $1}'); do
+        if "${OLLAMA_BIN}" show "${_m}" 2>/dev/null \
+             | grep -qE "^[[:space:]]*num_thread[[:space:]]+${CPU_THREADS}([^0-9]|$)"; then
+            continue
+        fi
+        printf 'FROM %s\nPARAMETER num_thread %s\n' "${_m}" "${CPU_THREADS}" > "${_mf}"
+        if "${OLLAMA_BIN}" create "${_m}" -f "${_mf}" >/dev/null 2>&1; then
+            echo "[egg] ${_m}: num_thread=${CPU_THREADS} gravado no modelo"
+        else
+            echo "[egg] AVISO: nao consegui gravar num_thread em ${_m}."
+        fi
+    done
+    rm -f "${_mf}"
+}
+
+# Em background: espera o Ollama responder, baixa o modelo pedido e grava o teto
+# de threads em todos os modelos presentes.
+(
+    READY_PORT="${OLLAMA_HOST##*:}"
+    for _ in $(seq 1 60); do
+        if curl -fsS "http://127.0.0.1:${READY_PORT}/api/tags" >/dev/null 2>&1; then break; fi
+        sleep 1
+    done
+    if [ "${AUTO_PULL}" = "true" ] || [ "${AUTO_PULL}" = "1" ]; then
+        if [ -n "${MODEL}" ]; then
             echo "[egg] Baixando '${MODEL}'... (o progresso aparece no console)"
             if "${OLLAMA_BIN}" pull "${MODEL}"; then
                 echo "[egg] Modelo '${MODEL}' pronto para uso."
             else
-                echo "[egg] Falha ao baixar '${MODEL}'. Verifique o nome do modelo e o espaco em disco."
+                echo "[egg] Falha ao baixar '${MODEL}'. Verifique o nome e o espaco em disco."
             fi
-        ) &
-    else
-        echo "[egg] AUTO_PULL esta ligado mas a variavel MODEL esta vazia - nada sera baixado."
+        else
+            echo "[egg] AUTO_PULL ligado mas MODEL esta vazio - nada sera baixado."
+        fi
     fi
-fi
+    bake_threads
+) &
 
 # ----------------------------------------------------------------- Open WebUI (opcional)
 # A interface web: contas, RAG, historico. Ocupa a allocation do server e fala com

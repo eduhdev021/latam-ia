@@ -176,7 +176,7 @@ egg = {
         },
         {
             "name": "Threads de inferencia",
-            "description": "Limita as threads do llama.cpp. IMPORTANTE: em modelo pequeno (<3B) usar todas as vCPU ATRASA - o overhead de sincronizacao come o ganho. 0 (padrao) = usa o numero de vCPU do container, que ja e o teto seguro. Modelos <3B costumam render melhor com 4-8. NUNCA ponha acima das vCPU do server: medido com 2 vCPU, 4 threads derrubou de 45.2 para 0.2 tok/s.",
+            "description": "Limita as threads do llama.cpp. O valor e gravado como 'PARAMETER num_thread' dentro de cada modelo no start - o Ollama NAO tem variavel de ambiente para threads, e o Open WebUI nao manda esse parametro, entao sem isso ele usa o que o nproc diz (todas as cores do host). IMPORTANTE: em modelo pequeno (<3B) usar todas as vCPU ATRASA. 0 (padrao) = usa o numero de vCPU do container, que ja e o teto seguro. NUNCA ponha acima das vCPU do server: medido com 2 vCPU, 4 threads derrubou de 45.2 para 0.2 tok/s.",
             "env_variable": "CPU_THREADS",
             "default_value": "0",
             "user_viewable": True,

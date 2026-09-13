@@ -127,8 +127,23 @@ cores de trabalho (já observado: `n_threads=20`, warmup de 114 s). O script lê
 `cpu.max` / `cpu.cfs_quota_us` e usa `quota/period` como teto, arredondando para
 baixo.
 
-O limite vale para o que o start script sobe. Cliente que chama a API direto
-precisa mandar `options.num_thread` na requisição.
+**Como o limite é aplicado de verdade:** o Ollama não tem variável de ambiente
+para threads — verificado no binário v0.34.0, não existe nenhuma `OLLAMA_*THREAD*`
+e a string `CPU_THREADS` aparece 0 vezes nele. `OMP_NUM_THREADS` também é
+ignorado (medido: com `OMP_NUM_THREADS=2` o runner seguiu em `n_threads = 1`). O
+único caminho que vale para **qualquer** cliente é gravar o parâmetro dentro do
+modelo, e é o que o start script faz em todo boot:
+
+```
+FROM qwen3:0.6b
+PARAMETER num_thread 2        # gravado via `ollama create` na mesma tag
+```
+
+Isso é necessário porque o Open WebUI não manda `num_thread`. Sem o parâmetro
+gravado, o Ollama usa o que o `nproc` reporta — todas as cores do host — e num
+container limitado por quota isso vira thrashing com throttle a cada 100 ms: a
+geração fica tão lenta que parece travada. Medido com o parâmetro gravado, via
+Open WebUI: `llama threadpool init, n_threads = 2` e 27,9 tok/s com `qwen3:0.6b`.
 
 ## Por que o start script vem do Git
 
@@ -172,11 +187,11 @@ motivo na tela — melhor falhar cedo do que subir um server sem o que executar.
 
 ## O que foi testado de verdade
 
-Três suítes, **86 asserts**:
+Três suítes, **91 asserts**:
 
 ```
 node tests/t-egg.mjs        # 45 asserts
-node tests/t-start.mjs      # 30 asserts
+node tests/t-start.mjs      # 35 asserts
 node tests/t-api-live.mjs   # 10 asserts (pula sem Ollama no ar)
 ```
 
