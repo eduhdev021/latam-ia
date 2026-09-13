@@ -32,7 +32,10 @@ export function boot(overrides = {}) {
       })
     };
   }
-  const dom = new JSDOM(HTML, {
+  const PAGE = overrides.owui
+    ? HTML.replace('data-auth="0"', 'data-auth="0" data-owui="1"')
+    : HTML;
+  const dom = new JSDOM(PAGE, {
     runScripts: 'dangerously', pretendToBeVisual: true, virtualConsole: vc, url: 'http://localhost/',
     beforeParse(w) {
       w.fetch = async (u, o) => {

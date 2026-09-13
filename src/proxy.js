@@ -15,6 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const https = require('https');
+const net = require('net');
 
 const PUBLIC_PORT = parseInt(process.env.SERVER_PORT || '11434', 10);
 const UPSTREAM_HOST = '127.0.0.1';
@@ -28,6 +29,55 @@ const CPU_THREADS = String(parseInt(process.env.CPU_THREADS || '0', 10) || 0);
 // Chave do token de acesso. Vazio = chat aberto (comportamento antigo).
 // UI_TOKEN vem da aba Startup do servidor; veja a variavel de mesmo nome na egg.
 const UI_TOKEN = (process.env.UI_TOKEN || '').trim();
+
+// Painel duplo numa porta so: com ENABLE_OPENWEBUI ligado, um cookie decide quem
+// a porta publica serve. Open WebUI nao funciona sob subcaminho (usa caminhos
+// absolutos), entao o interruptor troca a porta inteira em vez de montar /owui.
+const OWUI_ENABLED = /^(true|1)$/i.test((process.env.ENABLE_OPENWEBUI || '').trim());
+const OWUI_PORT = parseInt(process.env.OPENWEBUI_PORT || '3000', 10);
+function panelCookie(req) {
+  const raw = req.headers.cookie || '';
+  const m = raw.match(/(?:^|;\s*)latam_panel=([^;]+)/);
+  return m ? m[1] : '';
+}
+function owuiPipe(req, res) {
+  // identity: upstream sem gzip (e localhost, custo zero) - a injecao do botao
+  // "voltar" precisa do HTML em texto; bytes comprimidos virariam lixo.
+  const headers = Object.assign({}, req.headers, { host: '127.0.0.1:' + OWUI_PORT, 'accept-encoding': 'identity' });
+  const up = http.request(
+    { host: '127.0.0.1', port: OWUI_PORT, method: req.method, path: req.url, headers },
+    (ures) => {
+      const ct = String(ures.headers['content-type'] || '');
+      // na raiz, injeta um botao fixo "voltar pro LATAM IA" (o OWUI nao conhece
+      // o interruptor; sem isso o usuario ficaria preso no outro painel)
+      if (req.method === 'GET' && req.url === '/' && ures.statusCode === 200 && ct.includes('text/html') && !ures.headers['content-encoding']) {
+        const chunks = [];
+        ures.on('data', (c) => chunks.push(c));
+        ures.on('end', () => {
+          let body = Buffer.concat(chunks).toString('utf8');
+          const btn = '<a href="/__panel/latam" style="position:fixed;left:10px;bottom:10px;z-index:2147483647;' +
+            'background:#111;color:#fff;border:1px solid #555;border-radius:8px;padding:6px 10px;' +
+            'font:12px system-ui,sans-serif;text-decoration:none;opacity:.85">\u2190 LATAM IA</a>';
+          body = body.includes('</body>') ? body.replace('</body>', btn + '</body>') : body + btn;
+          const h = Object.assign({}, ures.headers);
+          delete h['content-length'];
+          delete h['content-encoding'];
+          h['content-length'] = String(Buffer.byteLength(body));
+          res.writeHead(ures.statusCode, h);
+          res.end(body);
+        });
+        return;
+      }
+      res.writeHead(ures.statusCode || 502, ures.headers);
+      ures.pipe(res);
+    }
+  );
+  up.on('error', () => {
+    if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('Open WebUI indisponivel nesta porta (ENABLE_OPENWEBUI/OPENWEBUI_PORT?)');
+  });
+  req.pipe(up);
+}
 const MAX_BODY = 32 * 1024 * 1024; // 32 MB: base64 de imagem + contexto grande
 
 // ----------------------------------------------------------------- sessao
@@ -287,6 +337,21 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
 
+  // ------------------------------------------------- interruptor de paineis
+  if (p === '/__panel/owui' || p === '/__panel/latam') {
+    const on = p === '/__panel/owui';
+    res.writeHead(302, {
+      'set-cookie': on
+        ? 'latam_panel=owui; Path=/; Max-Age=2592000; SameSite=Lax'
+        : 'latam_panel=; Path=/; Max-Age=0',
+      location: '/',
+    });
+    return res.end();
+  }
+  // cookie diz "owui": a porta inteira vira o Open WebUI (ele tem login proprio,
+  // entao passa na frente do UI_TOKEN do chat)
+  if (OWUI_ENABLED && panelCookie(req) === 'owui') return owuiPipe(req, res);
+
   // ---------------------------------------------------------------- login
   if (p === '/login') {
     // GET mostra o formulario; POST confere o token.
@@ -346,6 +411,8 @@ const server = http.createServer((req, res) => {
             CPU_THREADS +
             '" data-auth="' +
             (UI_TOKEN ? '1' : '0') +
+            '" data-owui="' +
+            (OWUI_ENABLED ? '1' : '0') +
             '"></div>'
         );
       sendChat(res, html);
@@ -443,6 +510,23 @@ const server = http.createServer((req, res) => {
   });
 
   req.pipe(upstream);
+});
+
+// WebSocket (socket.io do Open WebUI) segue o cookie do interruptor
+server.on('upgrade', (req, socket, head) => {
+  if (!(OWUI_ENABLED && panelCookie(req) === 'owui')) {
+    socket.destroy();
+    return;
+  }
+  const up = net.connect(OWUI_PORT, '127.0.0.1', () => {
+    const lines = Object.keys(req.headers).map((k) => k + ': ' + req.headers[k]);
+    up.write(req.method + ' ' + req.url + ' HTTP/1.1\r\n' + lines.join('\r\n') + '\r\n\r\n');
+    if (head && head.length) up.write(head);
+    up.pipe(socket);
+    socket.pipe(up);
+  });
+  up.on('error', () => socket.destroy());
+  socket.on('error', () => up.destroy());
 });
 
 server.on('clientError', (err, socket) => {

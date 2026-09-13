@@ -30,7 +30,7 @@ const dom = new JSDOM(html, {
     // num_ctx por modelo - o teste usa o proprio mecanismo do produto.
     w.localStorage.setItem('latam.settings', JSON.stringify({
       theme: 'dark',
-      opts: { 'qwen3:0.6b': { num_ctx: 2048 }, 'tinyllama:latest': { num_ctx: 2048 } },
+      opts: { 'qwen3:0.6b': { num_ctx: 1024 }, 'tinyllama:latest': { num_ctx: 1024 }, 'qwen2.5:0.5b': { num_ctx: 1024 } },
     }));
   },
 });

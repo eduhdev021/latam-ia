@@ -364,6 +364,20 @@ const sysOf = (body) => (body.messages.find((m) => m.role === 'system') || {}).c
   ok(chatsOf()[0].content === 'pergunta tres', 'sobrou a pergunta tres (sem resposta, apagada antes)', chatsOf()[0].content);
 }
 
+// ------------------------------------------- botao Open WebUI (porta unica)
+{
+  console.log('\n[open webui] botao no painel so quando o proxy anuncia');
+  const b1 = boot();
+  await ready(b1);
+  ok(b1.d.getElementById('owui-row').style.display === 'none', 'sem data-owui: linha escondida');
+
+  const b2 = boot({ owui: true });
+  await ready(b2);
+  const row = b2.d.getElementById('owui-row');
+  ok(row.style.display === '', 'com data-owui=1: linha visivel');
+  ok(b2.d.getElementById('owui-open').getAttribute('href') === '/__panel/owui', 'link aponta pro interruptor');
+}
+
 console.log('\n================================');
 console.log(`  ${pass} passaram, ${fail} falharam`);
 console.log('================================');

@@ -547,6 +547,9 @@
     <div class="fld"><label><b>API key</b></label>
       <input type="password" id="c-key" placeholder="sem chave" autocomplete="off">
       <div class="hint">Enviada como Authorization: Bearer. Fica so neste navegador. A API de destino precisa aceitar CORS.</div></div>
+    <div class="fld" id="owui-row" style="display:none"><label><b>Open WebUI</b> <span style="color:var(--dim)">- segundo painel</span></label>
+      <div class="hint">Contas de usuario, RAG e RBAC nesta mesma porta. Ao abrir, esta porta passa a servir o Open WebUI ate voce voltar.</div>
+      <div class="btn-row"><a href="/__panel/owui" id="owui-open" style="display:inline-block;padding:8px 12px;border-radius:9px;background:var(--accent);color:#fff;text-decoration:none;font-weight:600;font-size:13.5px">Abrir Open WebUI</a></div></div>
 
     <div class="grp-t">Memoria</div>
     <div class="fld"><label>Fatos lembrados em todas as conversas</label>
@@ -604,6 +607,7 @@
   var cfgEl = $('cfg');
   var THREADS = (cfgEl && cfgEl.dataset && cfgEl.dataset.threads) || '0';
   var HAS_AUTH = (cfgEl && cfgEl.dataset && cfgEl.dataset.auth) === '1';
+  var OWUI_ON = (cfgEl && cfgEl.dataset && cfgEl.dataset.owui) === '1';
 
   var LS = {
     read: function (k, d) { try { var v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
@@ -2446,6 +2450,7 @@
 
   /* ============================================================ boot */
   if (HAS_AUTH) $('logout-btn').style.display = '';
+  if (OWUI_ON) $('owui-row').style.display = '';
   applyTheme();
   bindSetting('p-theme', 'theme', 'bool');
   bindSetting('p-math', 'math', 'bool');

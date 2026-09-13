@@ -104,11 +104,12 @@ proprio proxy com `UI_TOKEN` e se limpa no final):
 | Arquivo | O que cobre | Resultado |
 | --- | --- | --- |
 | `t-chat2.mjs` | markdown, highlight, tool calling, parâmetros, export, interrupção | **60/60** |
-| `t-features.mjs` | memória, fila, multi-modelo, fixar, `search`, PWA, gerenciar modelos, editar/apagar mensagem | **76/76** |
+| `t-features.mjs` | memória, fila, multi-modelo, fixar, `search`, PWA, modelos, editar/apagar, botão OWUI | **79/79** |
 | `t-live.mjs` | ponta a ponta contra Ollama real (não mock) | **16/16** |
 | `t-live4.mjs` | as features novas contra Ollama real, com Wikipedia de verdade | **25/25** |
 | `t-live5.mjs` | API key de ponta a ponta contra proxy com `UI_TOKEN` | **8/8** |
 | `t-live6.mjs` | baixar e apagar modelo pela interface (pull/delete reais) | **11/11** |
+| `t-live7.mjs` | os dois painéis numa porta só (interruptor por cookie) | **11/11** |
 
 Dois bugs que a suíte ao vivo pegou e o jsdom sozinho não pegaria:
 
@@ -390,6 +391,13 @@ mesmo tempo que o chat LATAM IA, no mesmo server e usando o mesmo Ollama:
    **~2,7 GB de disco** (medido);
 4. Start → Open WebUI em `http://IP:3000` (primeiro acesso cria a conta admin),
    chat LATAM IA segue em `http://IP:PORTA/`.
+
+**So tem uma porta alocada? Da na mesma.** O proxy tem um interruptor: o painel
+do chat (grupo Conexao) mostra **Abrir Open WebUI** — a mesma porta publica
+passa a servir o Open WebUI (cookie `latam_panel`), com um botao "← LATAM IA"
+fixo na tela pra voltar. WebSocket (socket.io) segue o mesmo cookie, e o
+Open WebUI usa o login proprio dele (nao passa pelo `UI_TOKEN` do chat). Se
+voce tiver a segunda allocation, os dois jeitos funcionam ao mesmo tempo.
 
 Conta de custo (medido na pratica): ~2,7 GB de disco + **~920 MB de RAM** com o
 painel no ar — e RAM que sai da fatia dos modelos. Por isso vem desligado por
