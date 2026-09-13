@@ -39,6 +39,13 @@ if [ -n "${NUM_PARALLEL}" ];      then export OLLAMA_NUM_PARALLEL="${NUM_PARALLE
 if [ -n "${MAX_LOADED_MODELS}" ]; then export OLLAMA_MAX_LOADED_MODELS="${MAX_LOADED_MODELS}"; fi
 if [ -n "${CONTEXT_LENGTH}" ];    then export OLLAMA_CONTEXT_LENGTH="${CONTEXT_LENGTH}"; fi
 if [ -n "${KV_CACHE_TYPE}" ];     then export OLLAMA_KV_CACHE_TYPE="${KV_CACHE_TYPE}"; fi
+# O cache de prompt do llama-server guarda uma copia do estado de cada conversa na
+# RAM (medido: 87 MB por ~800 tokens) e o padrao dele e 8192 MiB - IGNORANDO o
+# limite do container. Num server de 8 GB com Open WebUI isso e receita para OOM.
+# O Ollama nao tem variavel propria, mas o llama-server le LLAMA_ARG_CACHE_RAM
+# (declarado em --help como env da flag --cache-ram). Verificado no v0.34.0:
+# com LLAMA_ARG_CACHE_RAM=256 o log passou a dizer "size limit: 256 MiB".
+if [ -n "${CACHE_RAM}" ];         then export LLAMA_ARG_CACHE_RAM="${CACHE_RAM}"; fi
 if [ -n "${LLM_LIBRARY}" ];       then export OLLAMA_LLM_LIBRARY="${LLM_LIBRARY}"; fi
 if [ "${FLASH_ATTENTION}" = "1" ] || [ "${FLASH_ATTENTION}" = "true" ]; then export OLLAMA_FLASH_ATTENTION=1; fi
 if [ "${DEBUG}" = "1" ] || [ "${DEBUG}" = "true" ];                     then export OLLAMA_DEBUG=1; fi
@@ -56,7 +63,26 @@ if [ "${OWUI_SERVE}" = "true" ]; then
     echo "[egg] interface : porta publica ${SERVER_PORT} -> Open WebUI em http://SEU_IP:${SERVER_PORT}/"
 fi
 echo "[egg] models    : ${OLLAMA_MODELS}"
-echo "[egg] memoria   : ${SERVER_MEMORY} MB (limite do container)"
+echo "[egg] cache     : prompt ${CACHE_RAM:-8192 (padrao do llama-server!)} MiB | K/V ${KV_CACHE_TYPE:-f16}"
+
+# Limite de memoria DESTE container. Nao da para usar MemTotal nem SERVER_MEMORY
+# sozinho: o Ollama mede "inference compute" pelo total da MAQUINA, entao ele acha
+# que cabe o que nao cabe. O cgroup e a unica fonte confiavel.
+# MEM_LIMIT_MB vindo de fora (raro) tem preferencia; senao lemos o cgroup.
+if [ -z "${MEM_LIMIT_MB}" ]; then
+    for _f in /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory/memory.limit_in_bytes; do
+        [ -r "${_f}" ] || continue
+        _v="$(head -1 "${_f}" 2>/dev/null | tr -dc '0-9')"
+        [ -z "${_v}" ] && continue
+        _mb=$(( _v / 1048576 ))
+        # cgroup v1 sem limite devolve um numero absurdo (~9.2e18); > 1 PB = ilimitado
+        [ "${_mb}" -gt 1048576 ] && continue
+        MEM_LIMIT_MB="${_mb}"
+        break
+    done
+fi
+[ -z "${MEM_LIMIT_MB}" ] && MEM_LIMIT_MB="${SERVER_MEMORY}"
+echo "[egg] memoria   : ${MEM_LIMIT_MB:-?} MB (limite do container)"
 echo "[egg] =============================================="
 
 if ! grep -q -m1 -o ' avx2 ' /proc/cpuinfo 2>/dev/null; then
@@ -102,9 +128,13 @@ if [ -n "${CG_MAX}" ]; then
         fi
     fi
 fi
-if [ -z "${CPU_THREADS}" ] || [ "${CPU_THREADS}" = "0" ]; then
-    CPU_THREADS="${NCPU}"
-fi
+# 'auto' (padrao), vazio, 0 ou qualquer valor que nao seja numero: usa o teto do
+# container. De proposito: "0" na aba Startup nao dizia nada para quem le.
+case "${CPU_THREADS}" in
+    ""|0|auto|AUTO|Auto) CPU_THREADS="" ;;
+    *[!0-9]*)            CPU_THREADS="" ;;
+esac
+[ -z "${CPU_THREADS}" ] && CPU_THREADS="${NCPU}"
 if [ "${CPU_THREADS}" -gt "${NCPU}" ] 2>/dev/null; then
     echo "[egg] AVISO: CPU_THREADS=${CPU_THREADS} mas o container so ve ${NCPU} vCPU."
     echo "[egg]         Mais threads que nucleos causa thrashing e derruba a velocidade."
@@ -129,6 +159,36 @@ echo "[egg]             parametro (o Ollama nao tem variavel de ambiente para th
 # reporta TODAS as cores do host (ex.: 10 num server de "200% CPU / 2 cores").
 # Muitas threads para pouca quota = thrashing + throttle a cada 100 ms, e a
 # geracao fica tao lenta que parece travada.
+# Conferencia de memoria: modelo no disco + interface precisam caber no cgroup.
+# Sem isso o usuario so descobre no susto, quando o chat para de responder porque
+# o kernel esta matando/trocando processo.
+check_memory() {
+    [ -z "${MEM_LIMIT_MB}" ] && return 0
+    # O que carrega na RAM e UM modelo por vez (MAX_LOADED_MODELS=1), entao a
+    # conta certa e o MAIOR modelo instalado - somar todos daria alarme falso
+    # em quem tem varios modelos baixados.
+    _model_mb="$("${OLLAMA_BIN}" list 2>/dev/null | awk '
+        NR>1 && $3 ~ /^[0-9]+(\.[0-9]+)?$/ {
+            m = ($4=="TB") ? 1048576 : ($4=="GB") ? 1024 : ($4=="KB") ? 1/1024 : 1
+            mb = $3 * m
+            if (mb > max) max = mb
+        } END { printf "%d", max }')"
+    [ -z "${_model_mb}" ] || [ "${_model_mb}" = "0" ] && \
+        _model_mb="$(du -sm "${OLLAMA_MODELS}/blobs" 2>/dev/null | awk '{print $1}')"
+    [ -z "${_model_mb}" ] && return 0
+    _reserva=300
+    [ "${OWUI_SERVE}" = "true" ] && _reserva=1300   # Open WebUI: ~700 MB-1 GB medido
+    _precisa=$(( _model_mb + _reserva ))
+    echo "[egg] memoria   : maior modelo ${_model_mb} MB + reserva ${_reserva} MB = ${_precisa} MB"
+    echo "[egg]             limite do container: ${MEM_LIMIT_MB} MB"
+    if [ "${_precisa}" -gt "${MEM_LIMIT_MB}" ]; then
+        echo "[egg] AVISO: NAO CABE. Faltam $(( _precisa - MEM_LIMIT_MB )) MB."
+        echo "[egg]         O chat vai travar ou o kernel vai matar o processo (OOM)."
+        echo "[egg]         Opcoes: modelo menor (ex.: 0.6b em vez de 7b), ou"
+        echo "[egg]         ENABLE_OPENWEBUI=false, ou mais RAM no painel."
+    fi
+}
+
 bake_threads() {
     _mf="${TMPDIR}/Modelfile.threads"
     for _m in $("${OLLAMA_BIN}" list 2>/dev/null | awk 'NR>1 && $1 ~ /:/ {print $1}'); do
@@ -167,6 +227,7 @@ bake_threads() {
         fi
     fi
     bake_threads
+    check_memory
 ) &
 
 # ----------------------------------------------------------------- Open WebUI (opcional)

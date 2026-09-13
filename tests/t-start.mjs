@@ -7,7 +7,7 @@
 // e se o Open WebUI assumiu a allocation - que e exatamente o que a egg promete.
 //
 // Roda em CI (ubuntu-latest) e local: node tests/t-start.mjs
-import { spawnSync } from "node:child_process";
+import { spawnSync, execSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -277,6 +277,48 @@ exit 0
   run(base, { ...envBase, STUB_JA_TEM: "8" });
   ok(gravados().split("\n").filter(Boolean).length === 2,
      "regravou os 2 quando o valor gravado era outro (8 -> 2)");
+  rmSync(base, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------- 10. CPU_THREADS=auto e checagem de memoria
+{
+  console.log("\n[10] CPU_THREADS=auto resolve para o teto do container, e a memoria e conferida");
+  const base = mkdtempSync(join(tmpdir(), "eggstart-"));
+  const bin = join(base, "stub-bin");
+  mkdirSync(join(base, "ollama", "bin"), { recursive: true });
+  mkdirSync(join(base, "owui-venv", "bin"), { recursive: true });
+  mkdirSync(join(base, "stub-bin"), { recursive: true });
+  mkdirSync(join(base, "models", "blobs"), { recursive: true });
+  writeFileSync(join(base, "ollama", "VERSION"), "v0.0.0-teste\n");
+  writeFileSync(join(base, "stub-bin", "curl"), "#!/bin/bash\nexit 0\n");
+  spawnSync("chmod", ["+x", join(base, "stub-bin", "curl")]);
+  // modelo de ~5 MB no disco, para a conta de memoria ser deterministica
+  writeFileSync(join(base, "models", "blobs", "sha256-fake"), Buffer.alloc(5 * 1024 * 1024, 7));
+  writeFileSync(join(base, "ollama", "bin", "ollama"),
+    "#!/bin/bash\ncase \"$1\" in serve) exit 0 ;; list) printf 'NAME              ID     SIZE     MODIFIED\\npequeno:0.6b      a1     523 MB   agora\\ngrande:7b          b2     4.7 GB   agora\\n' ;; esac\nexit 0\n");
+  spawnSync("chmod", ["+x", join(base, "ollama", "bin", "ollama")]);
+  writeFileSync(join(base, "owui-venv", "bin", "open-webui"),
+    "#!/bin/bash\nsleep 2\nexit 0\n");
+  spawnSync("chmod", ["+x", join(base, "owui-venv", "bin", "open-webui")]);
+
+  const ncpu = Number(execSync("nproc").toString().trim());
+  const envBase = { ...COMMON, SERVER_PORT: "25565", ENABLE_OPENWEBUI: "true",
+                    PATH: bin + ":" + process.env.PATH };
+
+  let out = run(base, { ...envBase, CPU_THREADS: "auto" });
+  ok(out.includes(`threads   : ${ncpu} (vCPU visiveis: ${ncpu})`),
+     `CPU_THREADS=auto virou o teto do container (${ncpu})`);
+  out = run(base, { ...envBase, CPU_THREADS: "abc" });
+  ok(out.includes(`threads   : ${ncpu} (`), "CPU_THREADS nao numerico tambem cai no teto");
+
+  out = run(base, { ...envBase, CPU_THREADS: "auto", MEM_LIMIT_MB: "1" });
+  ok(out.includes("AVISO: NAO CABE"), "avisa quando modelo + interface nao cabem na RAM");
+  ok(out.includes("O chat vai travar"), "explica a consequencia, nao so o numero");
+  ok(out.includes("maior modelo 4812 MB"),
+     "a conta usa o MAIOR modelo (4.7 GB), nao a soma dos instalados");
+  ok(!out.includes("maior modelo 5 MB"), "nao somou os modelos todos do disco");
+  out = run(base, { ...envBase, CPU_THREADS: "auto", MEM_LIMIT_MB: "8000" });
+  ok(!out.includes("AVISO: NAO CABE"), "com RAM suficiente nao avisa nada");
   rmSync(base, { recursive: true, force: true });
 }
 

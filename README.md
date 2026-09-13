@@ -64,22 +64,30 @@ muito lento (o start script avisa no console).
 
 ## Variáveis (aba Startup)
 
-17 variáveis. As que importam no dia a dia:
+18 variáveis. As que importam no dia a dia:
 
 | variável | padrão | o que faz |
 | --- | --- | --- |
 | `MODEL` | `qwen3:0.6b` | baixado automaticamente na instalação/start. |
 | `ENABLE_OPENWEBUI` | `true` | interface web na allocation + Ollama em localhost. `false` = API pura. |
 | `AUTO_PULL` | `true` | baixa `MODEL` ao subir. |
-| `CPU_THREADS` | `0` | `0` = usa as vCPU que o container enxerga (já é o teto seguro). |
+| `CPU_THREADS` | `auto` | `auto` = o teto de CPU que este container tem direito (lê o cgroup). Aceita número fixo. |
 | `CONTEXT_LENGTH` | `2048` | contexto padrão. É o que mais come RAM: corte para 1024 se apertar. |
+| `CACHE_RAM` | `512` | teto de RAM do cache de prompt. O padrão do llama-server é **8192** e ignora o container. |
+| `KV_CACHE_TYPE` | `q8_0` | metade da RAM do KV, sem perda de velocidade (medido abaixo). |
 | `KEEP_ALIVE` | `5m` | quanto tempo o modelo fica carregado. Menos = mais RAM livre. |
 | `NUM_PARALLEL` / `MAX_LOADED_MODELS` | `1` / `1` | suba só se sobrar RAM. |
 | `OLLAMA_VERSION` | `latest` | usada na instalação/reinstall. |
 | `UI_REPO` / `UI_REF` | este repo / `main` | de onde vem o start script. |
 
-O resto (`KV_CACHE_TYPE`, `ORIGINS`, `FLASH_ATTENTION`, `DEBUG`, `LLM_LIBRARY`,
-`STRIP_GPU_LIBS`) está documentado na própria egg.
+O resto (`ORIGINS`, `FLASH_ATTENTION`, `DEBUG`, `LLM_LIBRARY`, `STRIP_GPU_LIBS`)
+está documentado na própria egg.
+
+Todas as variáveis de liga/desliga aceitam `true`/`false` **e** `1`/`0`. Motivo:
+o painel transforma regra `in:` em dropdown, e um valor fora da lista faz ele
+recusar o salvamento da aba Startup inteira com *"The selected value is
+invalid."* — sem dizer qual campo. Um server criado com uma versão antiga da egg
+podia ficar travado assim.
 
 ## Usando a API
 
@@ -145,6 +153,54 @@ container limitado por quota isso vira thrashing com throttle a cada 100 ms: a
 geração fica tão lenta que parece travada. Medido com o parâmetro gravado, via
 Open WebUI: `llama threadpool init, n_threads = 2` e 27,9 tok/s com `qwen3:0.6b`.
 
+## Memória (importante)
+
+O que come RAM aqui, medido no server de teste com `qwen3:0.6b` em CPU:
+
+| onde | quanto | dá para controlar? |
+| --- | --- | --- |
+| pesos do modelo + buffers (`runner.size`) | 640 MiB | só trocando de modelo |
+| Open WebUI (uvicorn + SQLite) | 630 MiB parado | `ENABLE_OPENWEBUI=false` |
+| cache K/V (ctx 2048) | 59 MiB em `f16` | `KV_CACHE_TYPE=q8_0` |
+| **cache de prompt** | **87 MiB por ~800 tokens, teto de 8192 MiB** | `CACHE_RAM` |
+
+O cache de prompt era o buraco: o `llama-server` guarda uma cópia do estado de
+cada conversa na RAM para responder mais rápido, com **teto padrão de 8192 MiB
+que não olha o limite do container**. Num server de 8 GB com o Open WebUI isso é
+OOM ou swap — e o sintoma é o chat simplesmente parar de responder.
+
+O Ollama não tem variável própria para isso, mas o `llama-server` declara
+`(env: LLAMA_ARG_CACHE_RAM)` na flag `--cache-ram`, e o Ollama repassa o ambiente
+para o processo filho. Verificado:
+
+```
+$ CACHE_RAM=512  ->  srv load_model: prompt cache is enabled, size limit: 512 MiB
+$ CACHE_RAM=256  ->  srv load_model: prompt cache is enabled, size limit: 256 MiB
+padrao           ->  srv load_model: prompt cache is enabled, size limit: 8192 MiB
+```
+
+O start script também confere a conta no boot e avisa antes de você descobrir no
+susto, comparando com o **cgroup** (`/sys/fs/cgroup/memory.max`), não com a RAM
+da máquina — o Ollama mede `inference compute` pelo total do host e acha que cabe
+o que não cabe:
+
+```
+[egg] memoria   : maior modelo 637 MB + reserva 1300 MB = 1937 MB
+[egg]             limite do container: 8094 MB
+```
+
+A conta usa o maior modelo instalado, não a soma: com `MAX_LOADED_MODELS=1` só um
+carrega por vez.
+
+**`KV_CACHE_TYPE=q8_0` é grátis.** Mesmo prompt, mesmo contexto:
+
+| KV cache | `runner.size` | velocidade |
+| --- | --- | --- |
+| `f16` (padrão antigo) | 632,3 MiB | 24,1 tok/s |
+| `q8_0` (padrão agora) | 579,9 MiB | 26,4 tok/s |
+
+Menos RAM **e** mais rápido. Precisa de `FLASH_ATTENTION=1`, que já é o padrão.
+
 ## Por que o start script vem do Git
 
 O painel corta o script da egg em ~64 KiB (medido: 65.614 bytes). Com o
@@ -187,11 +243,11 @@ motivo na tela — melhor falhar cedo do que subir um server sem o que executar.
 
 ## O que foi testado de verdade
 
-Três suítes, **91 asserts**:
+Três suítes, **130 asserts**:
 
 ```
-node tests/t-egg.mjs        # 45 asserts
-node tests/t-start.mjs      # 35 asserts
+node tests/t-egg.mjs        # 78 asserts
+node tests/t-start.mjs      # 42 asserts
 node tests/t-api-live.mjs   # 10 asserts (pula sem Ollama no ar)
 ```
 
@@ -218,7 +274,7 @@ Além disso, validado com a stack real no ar (Ollama 0.34.0 + Open WebUI):
   CPU. O instalador remove as libs de CUDA/ROCm/Vulkan/MLX (2,2 GB → ~70 MB).
 - Modelos grandes ficam lentos em CPU. Prefira `qwen3:0.6b`, `qwen2.5:0.5b`,
   `tinyllama` — ou aceite a velocidade.
-- O Open WebUI custa ~1 GB de RAM parado. Se o server for pequeno, rode com
+- O Open WebUI custa ~630 MB de RAM parado. Se o server for pequeno, rode com
   `ENABLE_OPENWEBUI=false` e use a API.
 - O primeiro boot do Open WebUI baixa o modelo de embeddings (~90 MB).
 

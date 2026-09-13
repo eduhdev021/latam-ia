@@ -34,10 +34,11 @@ ok(egg.scripts.installation.container.startsWith("debian"),
 console.log("\n[2] variaveis da aba Startup");
 const vars = egg.variables.map((v) => v.env_variable);
 const ESPERADAS = [
-  "MODEL", "AUTO_PULL", "KEEP_ALIVE", "NUM_PARALLEL", "MAX_LOADED_MODELS",
-  "CONTEXT_LENGTH", "KV_CACHE_TYPE", "ORIGINS", "FLASH_ATTENTION", "DEBUG",
-  "LLM_LIBRARY", "ENABLE_OPENWEBUI", "CPU_THREADS", "UI_REPO", "UI_REF",
-  "OLLAMA_VERSION", "STRIP_GPU_LIBS",
+  "MODEL", "AUTO_PULL", "KEEP_ALIVE", "NUM_PARALLEL",
+  "MAX_LOADED_MODELS", "CONTEXT_LENGTH", "KV_CACHE_TYPE", "ORIGINS",
+  "CACHE_RAM", "FLASH_ATTENTION", "DEBUG", "LLM_LIBRARY",
+  "ENABLE_OPENWEBUI", "CPU_THREADS", "UI_REPO", "UI_REF",
+  "OLLAMA_VERSION", "STRIP_GPU_LIBS"
 ];
 ok(vars.length === ESPERADAS.length, `${vars.length} variaveis (esperado ${ESPERADAS.length})`);
 ok(JSON.stringify(vars) === JSON.stringify(ESPERADAS), "lista e ordem conferem");
@@ -113,6 +114,50 @@ ok(start.includes('export ENABLE_API_KEYS="${ENABLE_API_KEYS:-true}"'),
    "API keys do Open WebUI ligadas (unica API externa agora)");
 ok(start.includes("cpu.max") || start.includes("cfs_quota_us"),
    "teto de threads le o cgroup (o painel limita por quota, nao so por cpuset)");
+
+// ------------------------------------------------- 7. as regras aceitam o proprio default
+// "The selected value is invalid." no painel vem daqui: variavel com regra 'in:'
+// vira um dropdown, e se o valor (default ou o que ja esta salvo no server) nao
+// estiver na lista o painel recusa salvar a aba Startup INTEIRA.
+console.log("\n[7] as regras de cada variavel aceitam o valor default dela");
+for (const v of egg.variables) {
+  const val = String(v.default_value ?? "");
+  const regras = v.rules.split("|");
+  for (const r of regras) {
+    if (r.startsWith("in:")) {
+      ok(r.slice(3).split(",").includes(val),
+         `${v.env_variable}: default '${val}' esta na lista '${r.slice(3)}'`);
+    } else if (r.startsWith("max:")) {
+      ok(val.length <= Number(r.slice(4)),
+         `${v.env_variable}: default tem ${val.length} chars (max ${r.slice(4)})`);
+    } else if (r.startsWith("between:")) {
+      const [a, b] = r.slice(8).split(",").map(Number);
+      ok(val !== "" && Number(val) >= a && Number(val) <= b,
+         `${v.env_variable}: default '${val}' esta entre ${a} e ${b}`);
+    } else if (r === "numeric" || r === "integer") {
+      ok(val === "" || /^-?\d+$/.test(val), `${v.env_variable}: default '${val}' e numero`);
+    }
+  }
+}
+// dropdowns de liga/desliga aceitam as duas grafias: um server criado com uma egg
+// antiga pode ter "1" onde hoje a lista so teria "true" (e vice-versa).
+for (const nome of ["AUTO_PULL", "ENABLE_OPENWEBUI", "STRIP_GPU_LIBS", "FLASH_ATTENTION", "DEBUG"]) {
+  const v = egg.variables.find((x) => x.env_variable === nome);
+  const lista = v.rules.split("|").find((r) => r.startsWith("in:")).slice(3).split(",");
+  ok(["true", "1"].every((x) => lista.includes(x)) && ["false", "0"].every((x) => lista.includes(x)),
+     `${nome} aceita true/false e 1/0 (nao trava o salvamento da aba Startup)`);
+}
+
+// ---------------------------------------------- 8. teto de RAM do cache de prompt
+console.log("\n[8] o cache de prompt tem teto (o padrao do llama-server ignora o container)");
+const cacheRam = egg.variables.find((v) => v.env_variable === "CACHE_RAM");
+ok(!!cacheRam, "a egg expoe CACHE_RAM");
+ok(Number(cacheRam.default_value) <= 512,
+   `CACHE_RAM default ${cacheRam.default_value} MiB (o padrao do llama-server e 8192)`);
+ok(read("src/ollama-start.sh").includes('export LLAMA_ARG_CACHE_RAM="${CACHE_RAM}"'),
+   "start script exporta LLAMA_ARG_CACHE_RAM (unica forma de chegar no llama-server)");
+ok(read("src/ollama-start.sh").includes("check_memory"),
+   "start script confere se modelo + interface cabem na RAM do container");
 
 console.log(`\n${fail === 0 ? "PASSOU" : "FALHOU"}: ${pass} asserts ok, ${fail} falhas`);
 process.exit(fail === 0 ? 0 : 1);
