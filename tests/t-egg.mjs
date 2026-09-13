@@ -181,6 +181,8 @@ for (const [v, d] of [["CONTEXT_LENGTH", "2048"], ["KV_CACHE_TYPE", "q8_0"], ["F
   ok(read("src/ollama-start.sh").includes(`${v}="\${${v}:-${d}}"`),
      `${v} tem default ${d} no script (variavel vazia nao pode virar decisao do Ollama)`);
 }
+ok(read("src/ollama-start.sh").includes("check_disk"),
+   "start script confere o disco (a primeira parede) antes de baixar modelo");
 ok(read("src/ollama-start.sh").includes("check_memory"),
    "start script confere se modelo + interface cabem na RAM do container");
 

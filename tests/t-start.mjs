@@ -319,6 +319,14 @@ exit 0
   ok(!out.includes("maior modelo 5 MB"), "nao somou os modelos todos do disco");
   out = run(base, { ...envBase, CPU_THREADS: "auto", MEM_LIMIT_MB: "8000" });
   ok(!out.includes("AVISO: NAO CABE"), "com RAM suficiente nao avisa nada");
+  // disco e a primeira parede: o aviso tem que sair ANTES do pull
+  out = run(base, { ...envBase, CPU_THREADS: "auto", DISK_FREE_MB: "500", AUTO_PULL: "true", MODEL: "llama3.1:8b" });
+  ok(out.includes("AVISO: menos de 2 GB livres"), "avisa quando o disco esta curto");
+  ok(out.indexOf("AVISO: menos de 2 GB livres") < out.indexOf("Baixando 'llama3.1:8b'"),
+     "o aviso de disco sai ANTES de comecar o download");
+  out = run(base, { ...envBase, CPU_THREADS: "auto", DISK_FREE_MB: "20000" });
+  ok(!out.includes("menos de 2 GB livres"), "com disco sobrando nao avisa");
+  ok(out.includes("disco     : 20000 MB livres"), "mostra quanto disco tem");
   rmSync(base, { recursive: true, force: true });
 }
 
@@ -394,6 +402,29 @@ exit 0
   ok(out.includes("Baixando 'qwen3:0.6b'"), "baixou o primeiro");
   ok(out.includes("Baixando 'tinyllama'"), "baixou o segundo da lista separada por virgula");
   ok(!out.includes("Baixando 'qwen3:0.6b, tinyllama'"), "nao tratou a lista como um nome so");
+  rmSync(base, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------- 13. CORS no modo API pura
+{
+  console.log("\n[13] sem interface, o aviso de CORS aparece (403 nao se explica sozinho)");
+  const base = mkdtempSync(join(tmpdir(), "eggstart-"));
+  for (const d of ["ollama/bin", "stub-bin"]) mkdirSync(join(base, d), { recursive: true });
+  writeFileSync(join(base, "ollama", "VERSION"), "v0.0.0-teste\n");
+  writeFileSync(join(base, "stub-bin", "curl"), "#!/bin/bash\nexit 0\n");
+  spawnSync("chmod", ["+x", join(base, "stub-bin", "curl")]);
+  writeFileSync(join(base, "ollama", "bin", "ollama"),
+    "#!/bin/bash\ncase \"$1\" in serve) echo \"OLLAMA-ARGS:$*\"; sleep 2 ;; list) printf 'NAME\n' ;; esac\nexit 0\n");
+  spawnSync("chmod", ["+x", join(base, "ollama", "bin", "ollama")]);
+
+  const envBase = { ...COMMON, SERVER_PORT: "25565", ENABLE_OPENWEBUI: "false",
+                    PATH: join(base, "stub-bin") + ":" + process.env.PATH };
+  let out = run(base, { ...envBase, ORIGINS: "" });
+  ok(out.includes("ORIGINS esta vazio"), "avisa que a API vai dar 403 de fora");
+  ok(out.includes("volta 403"), "explica o sintoma, nao so a causa");
+  out = run(base, { ...envBase, ORIGINS: "*" });
+  ok(out.includes("origens   : *"), "mostra as origens quando estao definidas");
+  ok(!out.includes("ORIGINS esta vazio"), "com ORIGINS definido nao avisa");
   rmSync(base, { recursive: true, force: true });
 }
 

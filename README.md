@@ -132,6 +132,28 @@ Com `ENABLE_OPENWEBUI=false` a API é a do próprio Ollama na allocation:
 `/api/tags`, `/api/generate`, `/api/chat` e `/v1/*` (compatível com OpenAI), sem
 autenticação — nesse caso proteja com firewall ou não exponha a allocation.
 
+## CORS: 403 sem explicação no modo API pura
+
+Com `ENABLE_OPENWEBUI=false` a API do Ollama fica exposta na allocation. O
+Ollama **não tem autenticação** — o que separa "meu site pode chamar" de
+"qualquer site pode chamar" é o filtro de origem. Medido:
+
+```
+ORIGINS='*'  -> Origin: http://meusite.com  -> http=200
+ORIGINS vazio -> Origin: http://meusite.com -> http=403   (sem corpo, sem dica)
+```
+
+O default da egg é `*`. Se você limpar a variável, chamadas de navegador de outro
+domínio voltam 403 e parece que a API está quebrada — por isso o start script
+avisa no console em vez de deixar você descobrir:
+
+```
+[egg] AVISO: ORIGINS esta vazio - a API so aceita chamadas do proprio server.
+[egg]         Chamada de navegador de outro dominio volta 403 (sem mensagem).
+```
+
+Restrinja para a lista de domínios se a allocation for pública.
+
 ## Threads de inferência (importante)
 
 Em modelo pequeno (<3B) usar **todas** as vCPU **atrasa**: o overhead de
@@ -195,7 +217,15 @@ $ CACHE_RAM=256  ->  srv load_model: prompt cache is enabled, size limit: 256 Mi
 padrao           ->  srv load_model: prompt cache is enabled, size limit: 8192 MiB
 ```
 
-O start script também confere a conta no boot e avisa antes de você descobrir no
+O start script confere **disco** antes de baixar qualquer modelo (disco é a
+primeira parede: 500 MB para um 0.6b, 4,9 GB para um 8b, e o Open WebUI ainda
+baixa ~900 MB de embeddings no primeiro boot):
+
+```
+[egg] disco     : 15722 MB livres em /home/container
+```
+
+E também confere a conta de RAM no boot e avisa antes de você descobrir no
 susto, comparando com o **cgroup** (`/sys/fs/cgroup/memory.max`), não com a RAM
 da máquina — o Ollama mede `inference compute` pelo total do host e acha que cabe
 o que não cabe:
@@ -334,11 +364,11 @@ motivo na tela — melhor falhar cedo do que subir um server sem o que executar.
 
 ## O que foi testado de verdade
 
-Três suítes, **154 asserts**:
+Três suítes, **163 asserts**:
 
 ```
-node tests/t-egg.mjs        # 91 asserts
-node tests/t-start.mjs      # 53 asserts
+node tests/t-egg.mjs        # 92 asserts
+node tests/t-start.mjs      # 61 asserts
 node tests/t-api-live.mjs   # 10 asserts (pula sem Ollama no ar)
 ```
 

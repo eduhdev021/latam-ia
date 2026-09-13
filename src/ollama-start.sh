@@ -74,6 +74,17 @@ echo "[egg] Ollama $(cat "${OLLAMA_ROOT}/VERSION" 2>/dev/null || echo '?') | inf
 echo "[egg] api       : ${OLLAMA_HOST}"
 if [ "${OWUI_SERVE}" = "true" ]; then
     echo "[egg] interface : porta publica ${SERVER_PORT} -> Open WebUI em http://SEU_IP:${SERVER_PORT}/"
+else
+    # Sem interface a API do Ollama fica exposta na allocation. Ollama nao tem
+    # autenticacao, e o filtro de CORS decide quem pode chamar de um navegador.
+    # ORIGINS vazio = so localhost, e a chamada de fora volta 403 sem explicacao.
+    if [ -n "${ORIGINS}" ]; then
+        echo "[egg] origens   : ${ORIGINS} (CORS da API)"
+    else
+        echo "[egg] AVISO: ORIGINS esta vazio - a API so aceita chamadas do proprio server."
+        echo "[egg]         Chamada de navegador de outro dominio volta 403 (sem mensagem)."
+        echo "[egg]         Ponha ORIGINS=* na aba Startup, ou a lista de dominios permitidos."
+    fi
 fi
 echo "[egg] models    : ${OLLAMA_MODELS}"
 echo "[egg] cache     : prompt ${CACHE_RAM} MiB | K/V ${KV_CACHE_TYPE}"
@@ -172,6 +183,24 @@ echo "[egg]             parametro (o Ollama nao tem variavel de ambiente para th
 # reporta TODAS as cores do host (ex.: 10 num server de "200% CPU / 2 cores").
 # Muitas threads para pouca quota = thrashing + throttle a cada 100 ms, e a
 # geracao fica tao lenta que parece travada.
+# Conferencia de disco. Disco e a primeira parede: o modelo tem de 500 MB a 5 GB
+# e o Open WebUI ainda baixa ~900 MB de embeddings no primeiro boot. Sem aviso, o
+# usuario descobre quando o pull falha no meio ou o server para de gravar.
+# DISK_FREE_MB vindo de fora tem preferencia (raro); senao medimos com df.
+DISK_FREE_MB="${DISK_FREE_MB:-}"
+if [ -z "${DISK_FREE_MB}" ]; then
+    DISK_FREE_MB="$(df -BM --output=avail "${BASE_DIR}" 2>/dev/null | tail -1 | tr -dc '0-9')"
+fi
+check_disk() {
+    [ -z "${DISK_FREE_MB}" ] && return 0
+    echo "[egg] disco     : ${DISK_FREE_MB} MB livres em ${BASE_DIR}"
+    if [ "${DISK_FREE_MB}" -lt 2048 ] 2>/dev/null; then
+        echo "[egg] AVISO: menos de 2 GB livres. Modelos vao de 500 MB (0.6b) a 4.9 GB (8b)"
+        echo "[egg]         e o Open WebUI ainda baixa ~900 MB de embeddings no 1o boot."
+        echo "[egg]         Aumente o limite de disco no painel antes de baixar modelo grande."
+    fi
+}
+
 # Conferencia de memoria: modelo no disco + interface precisam caber no cgroup.
 # Sem isso o usuario so descobre no susto, quando o chat para de responder porque
 # o kernel esta matando/trocando processo.
@@ -270,6 +299,7 @@ bake_threads() {
         if curl -fsS "http://127.0.0.1:${READY_PORT}/api/tags" >/dev/null 2>&1; then break; fi
         sleep 1
     done
+    check_disk
     if [ "${AUTO_PULL}" = "true" ] || [ "${AUTO_PULL}" = "1" ]; then
         if [ -n "${MODEL}" ]; then
             # MODEL aceita varios nomes separados por virgula ou espaco, ex.:
