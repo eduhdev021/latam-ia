@@ -93,6 +93,8 @@ console.log("\n[5] o chat LATAM IA foi removido de vez");
 for (const f of ["src/chat.html", "src/proxy.js", "scripts/ui-chat.html", "scripts/ui-proxy.js"]) {
   ok(!existsSync(resolve(ROOT, f)), `${f} nao existe`);
 }
+ok(install.includes('rm -rf "${SERVER_DIR}/ui"'),
+   "instalador limpa o ui/ de versoes anteriores no reinstall");
 const haystack = install + read("src/ollama-start.sh") + JSON.stringify(egg);
 for (const token of ["ENABLE_UI", "UI_TOKEN", "OPENWEBUI_PORT", "proxy.js", "chat.html", "latam_panel"]) {
   ok(!haystack.includes(token), `nenhuma ocorrencia de '${token}'`);

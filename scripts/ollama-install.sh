@@ -152,6 +152,12 @@ fi
 
 # --------------------------------------------------------------- diretorios de runtime
 mkdir -p "${SERVER_DIR}/models" "${SERVER_DIR}/.ollama" "${SERVER_DIR}/temp"
+# Server instalado antes desta versao tem um ui/ com a interface antiga dentro.
+# Nada le mais aquilo: some no reinstall para nao ficar morto no disco.
+if [ -d "${SERVER_DIR}/ui" ]; then
+    echo "[egg] removendo ui/ de uma versao anterior (interface antiga, nao e mais usada)"
+    rm -rf "${SERVER_DIR}/ui"
+fi
 
 # --------------------------------------------------------------- repo (scripts)
 # O script de inicializacao vem do Git: ele nao cabe embutido na egg porque o
