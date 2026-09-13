@@ -8,7 +8,7 @@
 //
 // Roda em CI (ubuntu-latest) e local: node tests/t-start.mjs
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -171,6 +171,46 @@ const COMMON = {
   const base = setup({ withOwui: true });
   const out = run(base, { ...COMMON, SERVER_PORT: "25565", ENABLE_OPENWEBUI: "true", WEBUI_NAME: "Meu LLM" });
   ok(field(out, "OWUI-NAME") === "Meu LLM", "WEBUI_NAME='Meu LLM' -> " + field(out, "OWUI-NAME"));
+  rmSync(base, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------- 8. venv com caminho da instalacao
+{
+  console.log("\n[8] venv gravado com o caminho da instalacao (/mnt/server != /home/container)");
+  const base = setup({ withOwui: false });
+  const ERRADO = "/prefixo-da-instalacao";
+  const py = join(base, ".uv", "python", "cpython-3.11-linux-x86_64-gnu", "bin");
+  mkdirSync(py, { recursive: true });
+  // stub do interpretador: recebe o script como $1 e roda com bash, que e o que o
+  // CPython faz com um console script. ("exec \"$@\"" aqui daria loop infinito:
+  // o script tem shebang apontando de volta pro proprio interpretador.)
+  writeFileSync(join(py, "python3.11"), "#!/bin/bash\nexec /bin/bash \"$@\"\n");
+  spawnSync("chmod", ["+x", join(py, "python3.11")]);
+
+  mkdirSync(join(base, "owui-venv", "bin"), { recursive: true });
+  writeFileSync(join(base, "owui-venv", "pyvenv.cfg"),
+    `home = ${ERRADO}/.uv/python/cpython-3.11-linux-x86_64-gnu/bin\nuv = 0.12.13\nversion_info = 3.11\n`);
+  spawnSync("ln", ["-sfn", `${ERRADO}/.uv/python/cpython-3.11-linux-x86_64-gnu/bin/python3.11`,
+                   join(base, "owui-venv", "bin", "python")]);
+  writeFileSync(join(base, "owui-venv", "bin", "open-webui"),
+    `#!${ERRADO}/owui-venv/bin/python\necho "OWUI-ARGS:$*"\nexit 0\n`);
+  spawnSync("chmod", ["+x", join(base, "owui-venv", "bin", "open-webui")]);
+
+  const out = run(base, { ...COMMON, SERVER_PORT: "25565", ENABLE_OPENWEBUI: "true" });
+  ok(out.includes(`ajustando caminhos do venv (${ERRADO} -> ${base})`), "detecta e anuncia a reescrita");
+  ok(readFileSync(join(base, "owui-venv", "pyvenv.cfg"), "utf8")
+       .includes(`home = ${base}/.uv/python/cpython-3.11-linux-x86_64-gnu/bin`),
+     "pyvenv.cfg aponta pro BASE_DIR real");
+  ok(readlinkSync(join(base, "owui-venv", "bin", "python")).startsWith(base + "/"),
+     "symlink bin/python reapontado -> " + readlinkSync(join(base, "owui-venv", "bin", "python")));
+  ok(readFileSync(join(base, "owui-venv", "bin", "open-webui"), "utf8")
+       .startsWith(`#!${base}/owui-venv/bin/python`), "shebang do open-webui reescrito");
+  ok(field(out, "OWUI-ARGS") === "serve --host 0.0.0.0 --port 25565",
+     "e o Open WebUI sobe na allocation em vez de morrer com 'required file not found'");
+
+  // segunda passada: nao pode mexer em nada de novo
+  const out2 = run(base, { ...COMMON, SERVER_PORT: "25565", ENABLE_OPENWEBUI: "true" });
+  ok(!out2.includes("ajustando caminhos"), "idempotente: segunda execucao nao reescreve");
   rmSync(base, { recursive: true, force: true });
 }
 

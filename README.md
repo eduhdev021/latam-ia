@@ -155,14 +155,23 @@ motivo na tela — melhor falhar cedo do que subir um server sem o que executar.
 - Os dados ficam em `open-webui/` (SQLite) e sobrevivem a restart e a reinstall.
 - Não dá para servir o Open WebUI sob subpath: o SvelteKit usa caminhos absolutos
   (`/assets`, `/api`, `/socket.io`). Por isso ele precisa da porta inteira.
+- **O venv não é relocável e o Pterodactyl muda o caminho entre as fases.** O
+  instalador roda com o server em `/mnt/server`; em runtime o mesmo diretório é
+  montado em `/home/container`. O `uv` grava caminhos absolutos no shebang dos
+  executáveis de `bin/`, no symlink `bin/python` e no `home` do `pyvenv.cfg`. Sem
+  corrigir, o start morre com
+  `owui-venv/bin/open-webui: cannot execute: required file not found` — o kernel
+  não acha o interpretador do shebang. O start script reescreve o prefixo para o
+  `BASE_DIR` real em todo boot (idempotente), então instalações antigas se
+  consertam sozinhas no primeiro start, sem baixar nada de novo.
 
 ## O que foi testado de verdade
 
-Três suítes, **78 asserts**:
+Três suítes, **85 asserts**:
 
 ```
 node tests/t-egg.mjs        # 45 asserts
-node tests/t-start.mjs      # 23 asserts
+node tests/t-start.mjs      # 29 asserts
 node tests/t-api-live.mjs   # 10 asserts (pula sem Ollama no ar)
 ```
 
@@ -171,7 +180,9 @@ node tests/t-api-live.mjs   # 10 asserts (pula sem Ollama no ar)
 `SERVER_PORT` com Ollama em `127.0.0.1:11434`; API pura quando desligado;
 fallback quando o `owui-venv/` não existe; `ENABLE_OPENWEBUI=1`; colisão
 `SERVER_PORT=11434` → interna em 11435; teto de threads via cgroup;
-`WEBUI_NAME`; `ENABLE_API_KEYS=true`; e a ausência de qualquer `node` no caminho.
+`WEBUI_NAME`; `ENABLE_API_KEYS=true`; a ausência de qualquer `node` no caminho;
+e a reescrita dos caminhos do venv quando ele foi gravado com o prefixo da
+instalação (o bug do `required file not found`), inclusive a idempotência dela.
 
 Além disso, validado com a stack real no ar (Ollama 0.34.0 + Open WebUI):
 

@@ -139,13 +139,69 @@ if [ "${AUTO_PULL}" = "true" ] || [ "${AUTO_PULL}" = "1" ]; then
 fi
 
 # ----------------------------------------------------------------- Open WebUI (opcional)
-# A interface web: contas, RAG, historico de conversas. Fala com o MESMO Ollama
-# deste server em localhost. Os dados (SQLite) ficam em open-webui/ e sobrevivem
-# a restart. Precisa de allocation no painel so quando ENABLE_OPENWEBUI=false...
-# na pratica: a allocation do server e a dele.
+# A interface web: contas, RAG, historico. Ocupa a allocation do server e fala com
+# o Ollama em localhost. Os dados (SQLite) ficam em open-webui/ e sobrevivem a
+# restart e a reinstall.
+#
+# O venv do Open WebUI e criado na INSTALACAO, onde o diretorio do server e
+# /mnt/server. Em runtime o MESMO diretorio e montado em /home/container, e o uv
+# grava caminhos absolutos em tres lugares: o shebang dos executaveis de bin/, o
+# symlink bin/python e o "home" do pyvenv.cfg. Sem corrigir, o shebang aponta para
+# um interpretador que nao existe e o kernel responde "cannot execute: required
+# file not found" - o server cai na hora. A funcao abaixo reescreve o prefixo para
+# o BASE_DIR real. Roda em todo start, e idempotente (na segunda vez o prefixo ja
+# bate e ela nao faz nada) e conserta instalacoes antigas sem baixar nada de novo.
+owui_fix_paths() {
+    _venv="${BASE_DIR}/owui-venv"
+    _cfg="${_venv}/pyvenv.cfg"
+    [ -f "${_cfg}" ] || return 0
+    _old_home="$(sed -n 's/^home = //p' "${_cfg}" | head -1)"
+    case "${_old_home}" in
+        */.uv/*) ;;            # venv criado pelo uv, como o instalador faz
+        *) return 0 ;;         # layout diferente: nao mexe em nada
+    esac
+    _old_prefix="${_old_home%%/.uv/*}"
+    [ -n "${_old_prefix}" ] || return 0
+    if [ "${_old_prefix}" = "${BASE_DIR}" ]; then return 0; fi
+    _new_home="${BASE_DIR}${_old_home#"${_old_prefix}"}"
+    if [ ! -x "${_new_home}/python3.11" ]; then
+        echo "[egg] AVISO: nao achei o Python do Open WebUI em ${_new_home}."
+        echo "[egg]         Apague owui-venv/ e .uv/ e rode Reinstall Server."
+        return 0
+    fi
+    echo "[egg] Open WebUI: ajustando caminhos do venv (${_old_prefix} -> ${BASE_DIR})"
+    sed -i "s#^home = .*#home = ${_new_home}#" "${_cfg}"
+    for _l in "${_venv}/bin/python" "${_venv}/bin/python3" "${_venv}/bin/python3.11"; do
+        [ -L "${_l}" ] || continue
+        _t="$(readlink "${_l}")"
+        case "${_t}" in
+            "${_old_prefix}"/*) ln -sfn "${BASE_DIR}${_t#"${_old_prefix}"}" "${_l}" ;;
+        esac
+    done
+    _n=0
+    for _f in "${_venv}"/bin/*; do
+        [ -f "${_f}" ] && [ ! -L "${_f}" ] || continue
+        case "$(head -1 "${_f}" 2>/dev/null)" in
+            "#!${_old_prefix}/"*)
+                # delimitador @ de proposito: o padrao contem "#!" e o sed
+                # interpretaria o "#" como fim da expressao.
+                sed -i "1s@^#!${_old_prefix}/@#!${BASE_DIR}/@" "${_f}"
+                _n=$(( _n + 1 ))
+                ;;
+        esac
+    done
+    for _a in "${_venv}/bin/activate" "${_venv}/bin/activate.csh" \
+              "${_venv}/bin/activate.fish" "${_venv}/bin/activate.nu" \
+              "${_venv}/bin/activate.bat"; do
+        [ -f "${_a}" ] && sed -i "s#${_old_prefix}/#${BASE_DIR}/#g" "${_a}"
+    done
+    echo "[egg]             ${_n} shebang(s) + pyvenv.cfg + symlink corrigidos"
+}
+
 if [ "${OWUI_WANTED}" = "true" ]; then
     OWUI_BIN="${BASE_DIR}/owui-venv/bin/open-webui"
     if [ -x "${OWUI_BIN}" ]; then
+        owui_fix_paths
         export DATA_DIR="${BASE_DIR}/open-webui"
         export OLLAMA_BASE_URL="http://127.0.0.1:${OLLAMA_HOST##*:}"
         export WEBUI_NAME="${WEBUI_NAME:-LATAM IA}"
