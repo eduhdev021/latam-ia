@@ -1,0 +1,20 @@
+# Suíte de mock (jsdom) roda em CI: nao precisa de Ollama nem de servidor.
+# Os testes ao vivo (t-live*.mjs) ficam fora - precisam de um Ollama rodando.
+name: tests
+on:
+  push:
+  pull_request:
+jobs:
+  jsdom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: deps
+        run: cd tests && npm init -y >/dev/null 2>&1 && npm install --no-audit --no-fund jsdom >/dev/null 2>&1
+      - name: t-chat2 (markdown, tools, params, interrupcao)
+        run: cd tests && node t-chat2.mjs
+      - name: t-features (memoria, fila, multi, pin, search, key, pwa)
+        run: cd tests && node t-features.mjs

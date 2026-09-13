@@ -1,6 +1,12 @@
 import { JSDOM, VirtualConsole } from 'jsdom';
 import fs from 'fs';
-let HTML = fs.readFileSync('/home/user/egg-ollama/src/chat.html', 'utf8');
+// Resolve o chat relativo ao repo (tests/ fica dentro dele); o caminho absoluto
+// do sandbox de desenvolvimento fica so como fallback.
+export const CHAT_HTML = [
+  new URL('../src/chat.html', import.meta.url).pathname,
+  '/home/user/egg-ollama/src/chat.html',
+].find((f) => fs.existsSync(f));
+let HTML = fs.readFileSync(CHAT_HTML, 'utf8');
 HTML = HTML.replace('<div id="cfg" style="display:none"></div>',
   '<div id="cfg" style="display:none" data-threads="2" data-auth="0"></div>');
 export function boot(overrides = {}) {

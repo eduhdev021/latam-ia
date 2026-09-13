@@ -1,7 +1,7 @@
 // Testes das features novas (referencia: Open WebUI):
 // memoria persistente, fila de mensagens, multi-modelo, fixar conversa,
 // web_search via tool calling, PWA (manifest + service worker no proxy).
-import { boot, wait, until, ready } from './harness2.mjs';
+import { boot, wait, until, ready, CHAT_HTML } from './harness2.mjs';
 
 let pass = 0, fail = 0;
 function ok(cond, name, extra) {
@@ -229,7 +229,7 @@ const sysOf = (body) => (body.messages.find((m) => m.role === 'system') || {}).c
   const b = boot();
   await ready(b);
   const fs = await import('fs');
-  const html = fs.readFileSync('/home/user/egg-ollama/src/chat.html', 'utf8');
+  const html = fs.readFileSync(CHAT_HTML, 'utf8');
   ok(html.includes('rel="manifest"'), 'link do manifest');
   ok(html.includes("serviceWorker.register('/sw.js'"), 'registro do service worker');
   ok(html.includes('rel="icon"'), 'icone declarado');

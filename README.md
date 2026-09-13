@@ -95,7 +95,11 @@ Testado no sandbox (Debian 13 / glibc 2.41 — mesma base da `yolks:nodejs_24`),
 Testes em `tests/` rodam a página de verdade no jsdom, com `fetch` mockado devolvendo
 stream NDJSON e relógio dentro da página (`performance.now`) medindo cada paint.
 
-Suíte atual (roda com `node tests/t-*.mjs`, precisa de `npm i jsdom`):
+Suíte atual (roda com `node tests/t-*.mjs`, precisa de `npm i jsdom`). As duas
+suítes de mock rodam sozinhas em CI (`.github/workflows/tests.yml`) — os testes
+acham o chat por caminho relativo ao repo, sem depender de sandbox. As ao vivo
+(`t-live*`) precisam de um Ollama em `127.0.0.1:11434` (o `t-live5` sobe o
+proprio proxy com `UI_TOKEN` e se limpa no final):
 
 | Arquivo | O que cobre | Resultado |
 | --- | --- | --- |

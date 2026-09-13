@@ -1,17 +1,69 @@
 // Teste da API key de ponta a ponta: proxy REAL rodando com UI_TOKEN=segredo123.
 // O chat configura a mesma chave no painel (grupo Conexao) e tudo funciona;
 // com chave errada, a API recusa e o chat mostra erro.
+// Autocontido: sobe o proprio proxy (com UI_TOKEN) numa porta livre, copia os
+// arquivos do repo pra um tmp e derruba tudo no final. So precisa de node +
+// um Ollama respondendo em 127.0.0.1:11434 (o proxy faz o pipe).
 import { JSDOM, VirtualConsole } from 'jsdom';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { spawn } from 'child_process';
+import net from 'net';
 
-const BASE = 'http://127.0.0.1:29116';
+function repoFile(name) {
+  return [
+    new URL('../src/' + name, import.meta.url).pathname,
+    '/home/user/egg-ollama/src/' + name,
+  ].find((f) => fs.existsSync(f));
+}
+function repoAsset(name) {
+  return [
+    new URL('../assets/' + name, import.meta.url).pathname,
+    '/home/user/latam-ia/assets/' + name,
+  ].find((f) => fs.existsSync(f));
+}
+function freePort() {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const port = srv.address().port;
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'latam-key-'));
+for (const [src, dst] of [
+  [repoFile('proxy.js'), 'proxy.js'],
+  [repoFile('chat.html'), 'chat.html'],
+  [repoAsset('logo-192.png'), 'logo-192.png'],
+  [repoAsset('logo-512.png'), 'logo-512.png'],
+]) fs.copyFileSync(src, path.join(tmp, dst));
+
+const PORT = await freePort();
+const BASE = 'http://127.0.0.1:' + PORT;
+const proxy = spawn('node', ['proxy.js'], {
+  cwd: tmp,
+  env: { SERVER_PORT: String(PORT), UI_TOKEN: 'segredo123', CPU_THREADS: '2', PATH: process.env.PATH },
+  stdio: 'ignore',
+});
+// espera o proxy aceitar conexao
+{
+  let up = false;
+  for (let i = 0; i < 50 && !up; i++) {
+    await new Promise((r) => setTimeout(r, 200));
+    up = await fetch(BASE + '/manifest.webmanifest').then(() => true, () => false);
+  }
+  if (!up) { console.log('FAIL proxy nao subiu'); process.exit(1); }
+}
 let pass = 0, fail = 0;
 function ok(cond, name, extra) {
   if (cond) { pass++; console.log('  PASS ' + name); }
   else { fail++; console.log('  FAIL ' + name + (extra !== undefined ? '  -> ' + JSON.stringify(extra) : '')); }
 }
 
-let html = fs.readFileSync('/tmp/keytest/chat.html', 'utf8');
+let html = fs.readFileSync(path.join(tmp, 'chat.html'), 'utf8');
 html = html.replace('<div id="cfg" style="display:none"></div>',
   '<div id="cfg" style="display:none" data-threads="2" data-auth="0"></div>');
 
@@ -92,4 +144,6 @@ console.log('\n[4] logo servido pelo proxy com o arquivo do Git');
 console.log('\n================================');
 console.log(`  ${pass} passaram, ${fail} falharam`);
 console.log('================================');
+proxy.kill();
+fs.rmSync(tmp, { recursive: true, force: true });
 process.exit(fail ? 1 : 0);
