@@ -131,6 +131,7 @@ remover as libs de GPU fica em ~70 MB. O script avisa no log se o disco for insu
 | env | padrão | o que faz |
 |---|---|---|
 | `ENABLE_UI` | `true` | serve o chat em `http://IP:PORTA/`; `false` = só API na allocation |
+| `CPU_THREADS` | `0` | threads de inferência; `0` = número de vCPU do container |
 | `MODEL` | `qwen3:0.6b` | modelo baixado no start; vazio = não baixa nada |
 | `AUTO_PULL` | `true` | roda `ollama pull` assim que o servidor sobe |
 | `KEEP_ALIVE` | `5m` | quanto tempo o modelo fica na RAM (`-1` = nunca descarrega) |
@@ -191,6 +192,36 @@ Os modelos ficam em `/home/container/models` e contam no limite de disco do serv
   a egg usa `"Listening on"` **e** `"regex:(?i)listening on"`.
 - **`strip_ansi: true`** porque o `ollama pull` imprime barra de progresso com códigos ANSI, que
   poluem o console do painel.
+
+## Threads de inferência (importante)
+
+Modelo pequeno em CPU com thread demais fica **mais lento**, não mais rápido — o overhead de
+sincronização entre threads come o ganho. Medido neste projeto, num container de 2 vCPU com
+`qwen3:0.6b` (550 MB):
+
+| `num_thread` | 1º byte | velocidade | `prompt_eval` |
+|---|---|---|---|
+| 1 | 1.38 s | 27.8 tok/s | 0.22 s |
+| 2 | 1.27 s | 45.2 tok/s | 0.12 s |
+| **4** | **33.9 s** | **0.2 tok/s** | **6.74 s** |
+
+Quatro threads em dois núcleos derrubou a velocidade 200x. É oversubscription pura.
+
+Um relato real que motivou isso: server com 20 vCPU, `n_threads = 20`, e
+`llama-server started in 114.14 seconds` pra carregar o mesmo modelo de 550 MB que aqui carrega
+em 1.5 s. Não é o modelo, é thread.
+
+Por isso:
+
+- `CPU_THREADS=0` (padrão) usa o número de vCPU que o container enxerga — teto seguro.
+- O start script nunca deixa passar disso, e avisa no console se você tentar.
+- Modelos < 3B costumam render melhor com 4-8. Teste no seu hardware.
+- **O limite só vale pro chat.** Cliente que chama a API direto precisa mandar
+  `options.num_thread` na requisição. O console avisa isso no boot.
+- O Ollama não tem `OLLAMA_NUM_THREADS` (verificado no `envconfig`), e `taskset` não existe na
+  imagem yolks — por isso o caminho é `num_thread` por requisição.
+
+Se o seu log mostrar `warming up the model with an empty run` e demorar minutos, é isso.
 
 ## Limitações
 

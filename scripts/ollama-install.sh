@@ -883,6 +883,23 @@ if ! grep -q -m1 -o ' avx2 ' /proc/cpuinfo 2>/dev/null; then
     echo "[egg] AVISO: esta CPU nao tem AVX2 - a inferencia vai usar o backend 'cpu' basico e ficar bem lenta."
 fi
 
+# Threads de inferencia. Em modelo pequeno (<3B), usar todas as vCPU ATRASA muito:
+# medido com 2 vCPU -> 1 thread: 27.8 tok/s | 2: 45.2 tok/s | 4: 0.2 tok/s (thrashing).
+NCPU="$(nproc 2>/dev/null || echo 1)"
+if [ -z "${CPU_THREADS}" ] || [ "${CPU_THREADS}" = "0" ]; then
+    CPU_THREADS="${NCPU}"
+fi
+if [ "${CPU_THREADS}" -gt "${NCPU}" ] 2>/dev/null; then
+    echo "[egg] AVISO: CPU_THREADS=${CPU_THREADS} mas o container so ve ${NCPU} vCPU."
+    echo "[egg]         Mais threads que nucleos causa thrashing e derruba a velocidade."
+    echo "[egg]         Ajustando para ${NCPU}. Modelos <3B costumam render melhor com 4-8."
+    CPU_THREADS="${NCPU}"
+fi
+export CPU_THREADS
+echo "[egg] threads   : ${CPU_THREADS} (vCPU visiveis: ${NCPU})"
+echo "[egg] AVISO     : o limite vale para o chat. Clientes que chamam a API direto"
+echo "[egg]             precisam mandar options.num_thread=${CPU_THREADS} na requisicao."
+
 # ----------------------------------------------------------------- download automatico
 if [ "${AUTO_PULL}" = "true" ] || [ "${AUTO_PULL}" = "1" ]; then
     if [ -n "${MODEL}" ]; then

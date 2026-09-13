@@ -175,9 +175,9 @@ egg = {
         },
         {
             "name": "Threads de inferencia",
-            "description": "Limita as threads do llama.cpp. IMPORTANTE: em modelo pequeno (<3B) usar todas as vCPU ATRASA - o overhead de sincronizacao come o ganho. Use 4 a 8, ou o numero de nucleos FISICOS. 0 = deixar o Ollama decidir (usa tudo, ruim pra modelo pequeno).",
+            "description": "Limita as threads do llama.cpp. IMPORTANTE: em modelo pequeno (<3B) usar todas as vCPU ATRASA - o overhead de sincronizacao come o ganho. 0 (padrao) = usa o numero de vCPU do container, que ja e o teto seguro. Modelos <3B costumam render melhor com 4-8. NUNCA ponha acima das vCPU do server: medido com 2 vCPU, 4 threads derrubou de 45.2 para 0.2 tok/s.",
             "env_variable": "CPU_THREADS",
-            "default_value": "6",
+            "default_value": "0",
             "user_viewable": True,
             "user_editable": True,
             "rules": "nullable|numeric|between:0,256",
