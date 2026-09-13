@@ -392,7 +392,13 @@ mesmo tempo que o chat LATAM IA, no mesmo server e usando o mesmo Ollama:
 4. Start → Open WebUI em `http://IP:3000` (primeiro acesso cria a conta admin),
    chat LATAM IA segue em `http://IP:PORTA/`.
 
-**So tem uma porta alocada? Da na mesma.** O proxy tem um interruptor: o painel
+**Quer SÓ o Open WebUI (sem o chat LATAM IA)?** Deixe `ENABLE_UI=false` com
+`ENABLE_OPENWEBUI=true`: o Open WebUI assume a allocation publica
+(`http://IP:SERVER_PORT/`) e o Ollama fica so em localhost. Foi testado assim:
+porta publica servindo o Open WebUI (200/health), conta admin criada pela API e
+os modelos do Ollama visiveis por dentro dele.
+
+**So tem uma porta alocada (com os dois)? Da na mesma.** O proxy tem um interruptor: o painel
 do chat (grupo Conexao) mostra **Abrir Open WebUI** — a mesma porta publica
 passa a servir o Open WebUI (cookie `latam_panel`), com um botao "← LATAM IA"
 fixo na tela pra voltar. WebSocket (socket.io) segue o mesmo cookie, e o

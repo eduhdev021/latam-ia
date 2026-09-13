@@ -18,6 +18,9 @@ export OLLAMA_VULKAN=0
 # Com a interface ligada, o Node ocupa a allocation publica e o Ollama fica so em
 # 127.0.0.1 (porta interna nao precisa de allocation no Pterodactyl).
 UI_ON="false"
+OWUI_ONLY="false"
+OWUI_WANTED="false"
+if [ "${ENABLE_OPENWEBUI}" = "true" ] || [ "${ENABLE_OPENWEBUI}" = "1" ]; then OWUI_WANTED="true"; fi
 if [ "${ENABLE_UI}" = "true" ] || [ "${ENABLE_UI}" = "1" ]; then
     if ! command -v node >/dev/null 2>&1; then
         echo "[egg] ERRO: ENABLE_UI=true mas nao existe 'node' nesta imagem."
@@ -36,6 +39,14 @@ if [ "${ENABLE_UI}" = "true" ] || [ "${ENABLE_UI}" = "1" ]; then
     export OLLAMA_HOST="127.0.0.1:${INTERNAL_PORT}"
     export OLLAMA_INTERNAL_PORT="${INTERNAL_PORT}"
     fi
+elif [ "${OWUI_WANTED}" = "true" ] && [ -x "${BASE_DIR}/owui-venv/bin/open-webui" ]; then
+    # Sem o chat Node: o Open WebUI vira A interface publica na allocation,
+    # e o Ollama fica so em localhost falando com ele.
+    OWUI_ONLY="true"
+    INTERNAL_PORT=11434
+    if [ "${INTERNAL_PORT}" = "${SERVER_PORT}" ]; then INTERNAL_PORT=11435; fi
+    export OLLAMA_HOST="127.0.0.1:${INTERNAL_PORT}"
+    export OLLAMA_INTERNAL_PORT="${INTERNAL_PORT}"
 else
     export OLLAMA_HOST="0.0.0.0:${SERVER_PORT}"
 fi
@@ -63,6 +74,8 @@ echo "[egg] Ollama $(cat "${OLLAMA_ROOT}/VERSION" 2>/dev/null || echo '?') | inf
 echo "[egg] api       : ${OLLAMA_HOST}"
 if [ "${UI_ON}" = "true" ]; then
     echo "[egg] chat web  : porta publica ${SERVER_PORT} -> abra http://SEU_IP:${SERVER_PORT}/ no navegador"
+elif [ "${OWUI_ONLY}" = "true" ]; then
+    echo "[egg] interface : porta publica ${SERVER_PORT} -> Open WebUI em http://SEU_IP:${SERVER_PORT}/"
 fi
 echo "[egg] models    : ${OLLAMA_MODELS}"
 echo "[egg] memoria   : ${SERVER_MEMORY} MB (limite do container)"
@@ -151,15 +164,20 @@ fi
 # Segundo painel junto do chat LATAM IA: contas, RAG, RBAC. Precisa de allocation
 # propria no painel (OPENWEBUI_PORT). Fala com o MESMO Ollama deste server.
 # Os dados (SQLite) ficam em open-webui/ e sobrevivem a restart.
-if [ "${ENABLE_OPENWEBUI}" = "true" ] || [ "${ENABLE_OPENWEBUI}" = "1" ]; then
+if [ "${OWUI_WANTED}" = "true" ]; then
     OWUI_BIN="${BASE_DIR}/owui-venv/bin/open-webui"
     if [ -x "${OWUI_BIN}" ]; then
-        OWUI_PORT="${OPENWEBUI_PORT:-3000}"
+        if [ "${OWUI_ONLY}" = "true" ]; then OWUI_PORT="${SERVER_PORT}"; else OWUI_PORT="${OPENWEBUI_PORT:-3000}"; fi
         export DATA_DIR="${BASE_DIR}/open-webui"
         export OLLAMA_BASE_URL="http://127.0.0.1:${OLLAMA_HOST##*:}"
+        export WEBUI_NAME="${WEBUI_NAME:-LATAM IA}"
         mkdir -p "${DATA_DIR}"
-        echo "[egg] Open WebUI: http://SEU_IP:${OWUI_PORT} (aloque essa porta no painel)"
-        echo "[egg]             primeiro acesso cria a conta admin. Dados em open-webui/"
+        echo "[egg] Open WebUI: http://SEU_IP:${OWUI_PORT} (primeiro acesso cria a conta admin)"
+        if [ "${OWUI_ONLY}" = "true" ]; then
+            echo "[egg]             modo exclusivo: Open WebUI na allocation, Ollama em localhost"
+            "${OLLAMA_BIN}" serve &
+            exec "${OWUI_BIN}" serve --host 0.0.0.0 --port "${OWUI_PORT}"
+        fi
         "${OWUI_BIN}" serve --host 0.0.0.0 --port "${OWUI_PORT}" &
     else
         echo "[egg] AVISO: ENABLE_OPENWEBUI=true mas owui-venv/ nao existe."

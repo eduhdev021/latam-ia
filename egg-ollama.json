@@ -139,7 +139,7 @@
         },
         {
             "name": "Painel de chat web",
-            "description": "true serve uma interface de chat em http://IP:PORTA/ e deixa o Ollama em 127.0.0.1. false expoe a API direto na allocation.",
+            "description": "true serve o chat LATAM IA em http://IP:PORTA/ (Ollama fica em 127.0.0.1). false = so a API na allocation - exceto com ENABLE_OPENWEBUI=true, ai o Open WebUI assume a porta.",
             "env_variable": "ENABLE_UI",
             "default_value": "true",
             "user_viewable": true,
@@ -149,7 +149,7 @@
         },
         {
             "name": "Open WebUI (2o painel)",
-            "description": "true instala e roda o Open WebUI junto (contas de usuario, RAG de documentos, RBAC). Custa ~3 GB de disco e 1-2 GB de RAM em execucao, fora o Ollama+modelo. Instala via Reinstall; liga/desliga o processo por aqui. Usa o MESMO Ollama do server.",
+            "description": "true instala e roda o Open WebUI (contas, RAG, RBAC). Com ENABLE_UI=true roda junto do chat (porta OPENWEBUI_PORT ou interruptor na mesma porta); com ENABLE_UI=false o Open WebUI vira a interface unica na allocation. Custa ~3 GB de disco e ~1 GB de RAM. Instala via Reinstall.",
             "env_variable": "ENABLE_OPENWEBUI",
             "default_value": "false",
             "user_viewable": true,
