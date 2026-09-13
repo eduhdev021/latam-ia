@@ -319,10 +319,10 @@ motivo na tela — melhor falhar cedo do que subir um server sem o que executar.
 
 ## O que foi testado de verdade
 
-Três suítes, **153 asserts**:
+Três suítes, **154 asserts**:
 
 ```
-node tests/t-egg.mjs        # 90 asserts
+node tests/t-egg.mjs        # 91 asserts
 node tests/t-start.mjs      # 53 asserts
 node tests/t-api-live.mjs   # 10 asserts (pula sem Ollama no ar)
 ```
@@ -343,6 +343,32 @@ Além disso, validado com a stack real no ar (Ollama 0.34.0 + Open WebUI):
 - signup do admin, criação de API key, `GET /api/v1/models`, chave errada → 401;
 - `POST /api/v1/chat/completions` → 200 (12 tok/s com `tinyllama`);
 - `api/version`, `api/tags`, `api/generate`, `api/chat` e streaming NDJSON.
+
+## Resposta em branco com `qwen3` (importante)
+
+`qwen3` é modelo de **raciocínio**: ele pensa antes de responder, e o pensamento
+vai num campo separado. Com um teto de tokens curto o orçamento acaba no meio do
+pensamento e a resposta visível vem **vazia**. Medido com `qwen3:0.6b`, prompt
+"Diga OK":
+
+| `num_predict` | `response` | `thinking` | `done_reason` |
+| --- | --- | --- | --- |
+| 8 | **0 chars** | 24 chars | `length` |
+| 64 | **0 chars** | 251 chars | `length` |
+| 200 | **0 chars** | 914 chars | `length` |
+
+Ou seja: **se você limitar "Max Tokens" no Open WebUI usando qwen3, a resposta
+pode vir em branco** — e parece que o servidor travou, mas não travou.
+
+Duas saídas:
+
+- Aumente o limite de tokens (ou deixe sem limite).
+- Desligue o raciocínio. Pela API é o campo **raiz** `"think": false`, não uma
+  `option` — medido: `response: "Diga OK."`, `thinking: 0 chars`. No Open WebUI
+  isso fica nos Advanced Params do modelo (ele repassa `think` como parâmetro
+  raiz — `utils/payload.py`). `/no_think` no texto do prompt **não** funcionou
+  aqui, e `PARAMETER think false` no Modelfile é recusado
+  (`Error: unknown parameter 'think'`).
 
 ## Limitações
 

@@ -50,7 +50,14 @@ const gen = await api("/api/generate", {
   options: { num_predict: 8, num_ctx: 512, num_thread: Number(process.env.CPU_THREADS || 2) },
 });
 const dt = ((Date.now() - t0) / 1000).toFixed(1);
-ok(typeof gen.response === "string" && gen.response.length > 0, `api/generate respondeu em ${dt}s`);
+// Modelos de raciocinio (qwen3) gastam o orcamento de tokens no campo "thinking":
+// com num_predict baixo a "response" vem VAZIA e done_reason="length". Medido com
+// qwen3:0.6b: num_predict 8/64/200 -> response 0 chars, thinking 24/251/914 chars.
+// Entao o que prova que a API funcionou e ter texto em qualquer um dos dois.
+const gerou = (typeof gen.response === "string" && gen.response.length > 0)
+           || (typeof gen.thinking === "string" && gen.thinking.length > 0);
+ok(gerou, `api/generate gerou texto em ${dt}s` +
+   (gen.response ? "" : ` (so thinking: modelo de raciocinio com orcamento curto)`));
 ok(gen.done === true, "api/generate terminou (done=true)");
 ok((gen.eval_count || 0) > 0, `${gen.eval_count} tokens gerados`);
 

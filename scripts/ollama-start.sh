@@ -292,8 +292,10 @@ bake_threads() {
     # .signin existe para quem nao consegue reimportar: cria um arquivo vazio
     # chamado .signin no diretorio do server pelo gerenciador de arquivos do
     # painel, da Start, e apaga depois. Funciona sem mexer na egg.
+    # Em subshell proprio: o signin fica esperando a autorizacao por ate 10 min,
+    # e nao pode segurar o bake de threads nem a conferencia de memoria.
     if [ "${SIGNIN}" = "1" ] || [ "${SIGNIN}" = "true" ] || [ -e "${BASE_DIR}/.signin" ]; then
-        signin_cloud
+        ( signin_cloud ) &
     fi
     bake_threads
     check_memory
